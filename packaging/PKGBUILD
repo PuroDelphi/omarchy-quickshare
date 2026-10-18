@@ -1,6 +1,6 @@
 # Build with scripts/build-package.sh from a source checkout.
 pkgname=omarchy-quickshare
-pkgver=0.3.2
+pkgver=0.3.3
 pkgrel=1
 pkgdesc='Quick Share Rust backend for the native Omarchy plugin'
 url='https://github.com/PuroDelphi/omarchy-quickshare'
@@ -45,6 +45,7 @@ package() {
   install -Dm644 docs/USER_GUIDE.md "$pkgdir/usr/share/doc/$pkgname/docs/USER_GUIDE.md"
   install -Dm644 docs/INSTALLATION.md "$pkgdir/usr/share/doc/$pkgname/docs/INSTALLATION.md"
   install -Dm644 docs/ARCHITECTURE.md "$pkgdir/usr/share/doc/$pkgname/docs/ARCHITECTURE.md"
+  install -Dm644 docs/assets/paypal-qr.png "$pkgdir/usr/share/doc/$pkgname/docs/assets/paypal-qr.png"
   install -d -m755 "$pkgdir/usr/share/doc/$pkgname/docs/assets/screenshots"
   install -m644 docs/assets/screenshots/*.png "$pkgdir/usr/share/doc/$pkgname/docs/assets/screenshots/"
   install -Dm644 CONTRIBUTING.md "$pkgdir/usr/share/doc/$pkgname/CONTRIBUTING.md"

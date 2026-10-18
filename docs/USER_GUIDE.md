@@ -6,6 +6,8 @@ Omarchy Quick Share connects your desktop to Android's existing Quick Share. The
 
 The panel header reads the installed plugin version from `manifest.json`, including prerelease suffixes when present. It does not infer a version from the Git branch or substitute the backend executable's version.
 
+The standalone bar icon follows Omarchy's contrast-aware foreground, including transparent bars over light or dark wallpapers. Incoming requests and outgoing PIN confirmation retain the urgent color; a disconnected service remains dimmed. This presentation fix needs a plugin update, not a backend restart.
+
 ## Before sharing
 
 - Complete **Install service** from the panel and wait for **Ready**.

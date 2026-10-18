@@ -6,8 +6,6 @@ Send photos, videos and files between your Android phone and Omarchy using the p
 
 ![Omarchy Quick Share — Android file sharing for your desktop](preview.png)
 
-**Powered by Jhonny Suárez - PuroDelphi**
-
 - **Native desktop experience:** a theme-integrated bar widget, transfer panel and incoming notifications.
 - **One file or a whole selection:** send from the panel or Nautilus's **Send via Quick Share** menu.
 - **Stay in control:** compare the code, approve incoming files, follow progress and cancel explicitly.
@@ -87,3 +85,7 @@ Service removal preserves configuration and received files. The terminal explain
 Original project code is [MIT](LICENSE). The vendored rquickshare core remains **GPL-3.0-only**, with separately licensed schemas; the combined daemon is **not MIT-only**. See the [component licenses and source obligations](docs/ARCHITECTURE.md#licenses-and-corresponding-source).
 
 This is an independent project, not an official Google, Android or Omarchy product. Product names belong to their respective owners.
+
+Powered by JhonnySuarez - PuroDelphi. Support the project through [GitHub Sponsors](https://github.com/sponsors/PuroDelphi) or [PayPal](https://www.paypal.com/donate/?hosted_button_id=KBAUBYYDNHQNQ).
+
+[![PayPal donation QR](docs/assets/paypal-qr.png)](https://www.paypal.com/donate/?hosted_button_id=KBAUBYYDNHQNQ)
