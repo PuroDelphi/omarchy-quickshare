@@ -7,7 +7,7 @@ WORK_BASE=${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}}
 mkdir -p -- "$WORK_BASE"
 WORK=$(mktemp -d "$WORK_BASE/omarchy-quickshare-package.XXXXXXXX")
 trap 'rm -rf -- "$WORK"' EXIT
-VERSION=0.3.2
+VERSION=0.3.3
 OUTPUT_DIR=${QUICKSHARE_PACKAGE_OUTPUT:-$ROOT/dist}
 command -v makepkg >/dev/null || { printf 'Falta makepkg.\n' >&2; exit 1; }
 [[ -f "$ROOT/Cargo.lock" ]] || { printf 'Falta Cargo.lock; genera y verifica primero la compilación.\n' >&2; exit 1; }

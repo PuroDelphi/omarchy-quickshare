@@ -172,6 +172,16 @@ Without DeviceRemoved, duplicate legacy headers remained cached, an unrefreshed 
 
 Two concurrent-injection observations had a census of **127**, followed by a Connect-time count of **128** 57/84 ms later. They complied with the snapshot admission policy, not an atomic global bound; the limitation is retained rather than discarded from the evidence. These are production-engine behavior checks against a modeled BlueZ contract, not native bluetoothd, physical HCI/ATT, Android interoperability or a new file transfer. No installed service, host Bluetooth/network state, preferences or received files were changed.
 
+## Transparent-bar contrast and alpha promotion — 0.3.3
+
+PR [#2](https://github.com/PuroDelphi/omarchy-quickshare/pull/2), contributed by **OverStyleFR**, changes only the normal bar glyph foreground from `bar.foreground` to Omarchy's contrast-aware `bar.barForeground`. The installed SDK exposes this property through `Ui.PluginBarApi` and already uses it in native `Ui.WidgetButton`. The PR adds no commands, dependencies, permissions, network access or file access.
+
+The actual `BarWidget.qml`, native `Ui.BarIconButton`/`Ui.PluginBarApi` and theme singletons rendered in an isolated Quickshell configuration. Eight observed states covered opaque bars, transparent bars over light/dark surfaces, incoming requests, outgoing PIN confirmation, disconnected-service dimming, a vertical bar and the no-bar fallback. Captured glyphs used the expected contrast/urgent colors, remained unframed and retained offline opacity. This was offscreen software rendering with controlled presentation/state fixtures, not a capture of the user's desktop bar: native Wayland capture was unavailable.
+
+Stable security fixes were merged into alpha before PR integration. Promotion also retains alpha's repository-local GitHub Sponsors/PayPal funding configuration, plain README footer and original PayPal QR, without donation badges. `zbarimg` decoded the QR to the configured PayPal hosted-button URL. No host bar/theme settings, backend service, radio/network configuration or received files were changed.
+
+The integrated **0.3.3** locked workspace built and passed **131 Rust tests**, with one consenting physical SDP regression ignored. All five service-maintenance regressions, package/builder syntax checks and native plugin validation passed. No new physical phone transfer is claimed for this presentation/funding update.
+
 ## Evidence interpretation
 
 Successful transfer means engine completion plus the stated integrity method. A valid media container, a round trip, a capability label or 0/0 bytes alone is not independent destination integrity.
