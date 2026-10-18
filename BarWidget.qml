@@ -59,7 +59,7 @@ Ui.BarIconButton {
   Accessible.role: Accessible.Button
   Accessible.name: statusText
   text: "󰒗"
-  foreground: incoming || awaitingPin ? (bar ? bar.urgent : Color.urgent) : (bar ? bar.foreground : Color.foreground)
+  foreground: incoming || awaitingPin ? (bar ? bar.urgent : Color.urgent) : (bar ? bar.barForeground : Color.foreground)
   opacity: service && service.online ? 1 : 0.5
   onPressed: function(buttonCode) {
     if (buttonCode === Qt.RightButton && service) service.refresh()
