@@ -67,13 +67,17 @@ Finish or explicitly cancel active transfers first.
 omarchy plugin update macondo.quickshare
 ```
 
-The native updater follows the repository's stable `main` channel, including **v0.2.4** and its optional transfer effects. Then open **Settings** in the panel and choose **Update service** in the **Service** section when you want to update the backend to the release supplied by the current checkout. Source mode rebuilds the current locked checkout; package mode creates and installs the corresponding Arch package with local authorization. Do not claim the daemon is updated merely because the QML checkout changed.
+The native updater follows the repository's stable `main` channel. Stable **0.3.2** adds bounded Bluetooth metadata/subscription retention and conservative BlueZ connection admission to the visibility-scoped mDNS advertisement generations, native LAN QR sending, lower-left closed-panel companion and earlier LAN-first/shared-port, private native-folder-picker and first-install fixes. Then open **Settings** in the panel and choose **Update service** in the **Service** section to update the backend to the release supplied by the current checkout. Source mode rebuilds the current locked checkout; package mode creates and installs the corresponding Arch package with local authorization. Use **Install service** instead if setup never completed. Do not claim the daemon is updated merely because the QML checkout changed; no silent update hook installs or restarts it.
 
 Backend **0.1.2 or newer** supports the private file-selection handoff and the UI-only transfer effects; effects alone do not require a backend upgrade. A 0.1.1 or older backend displays **Service update required**; update the service as well as the native plugin before sharing files. Restart Nautilus after saving work so its process loads the updated extension.
 
 Backend **0.2.4** includes the bounded discovery lifecycle plus the incoming LAN-first/shared-port improvements from alpha. Updating QML or reloading the shell alone does not update the running daemon. Update the native plugin, then use its explicit service update action to apply these backend changes. An older marketplace snapshot does not verify the newer upstream code.
 
 Backend **0.2.5** adds the native folder-picker mode. The panel no longer creates an editable download-path field, including when Settings is collapsed. Updating the panel removes that shared-shell clipboard-reading path immediately; **Update service** supplies folder selection. Older backends can continue their existing supported transfer actions, but the new folder button stays disabled until directory-picker support is reported.
+
+Backend **0.3.1** creates its separate mDNS advertisement daemon only while receive visibility is on and retires each visible generation after **60 seconds**, without extending that lifetime for repeated Visible updates. It unregisters and waits for daemon shutdown acknowledgment before starting another generation, and retains no advertisement listener/cache while invisible. This bounds cache retention lifetime, not absolute memory bytes under a packet flood. The shared TCP listener, active transfers, endpoint IDs, LAN priority and QR discovery behavior are unchanged. This backend fix requires the native plugin update followed by the explicit **Update service** action; reloading the shell alone does not apply it.
+
+Backend **0.3.2** shares a **128-address / 45-second** lease across Bluetooth observations, legacy-header results and peers, replacing retained per-address subscriptions. Before each new automatic GATT connection it checks the live adapter inventory, including BlueZ-retained objects, and requires fewer than **128 Device1 objects**. It protects paired/bonded/trusted/blocked or already-connected devices and does not remove devices or delete BlueZ storage. This limits the application's automatic admission, not global BlueZ memory/disk or concurrent activity by other clients. Both the native plugin update and explicit **Update service** action are needed; shell reload alone does not apply this fix.
 
 If Omarchy keeps a previously loaded component after a plugin update, use `omarchy restart shell` before opening its updated controls. Shell reload does not itself cancel the independent daemon's transfers, but service maintenance still requires them to end first.
 
@@ -156,25 +160,15 @@ Actions are `install`, `update` and `remove`; language can be `en` or `es`. This
 
 Package builds use the user's cache rather than memory-backed `/tmp` by default and remove their temporary work directory when finished. An explicit `TMPDIR` takes precedence; choose a filesystem with enough space for the Rust build.
 
-## Trying native QR sending on alpha
+## Stable 0.3.2 and matching backend
 
-Native QR sending is available in **0.3.0-alpha.3** of both the plugin and backend, including the native-folder security correction from stable 0.2.5 and first-install lifecycle correction from 0.2.6. QR remains outside the stable `main` channel and its marketplace review.
+Stable **0.3.2** on `main`, the channel used for the marketplace submission, retains the native QR sending introduced in **0.3.0**, the advertisement-daemon lifecycle fix and the Bluetooth retention/admission fix described above. Update the plugin through the [native lifecycle](#update), then finish or cancel transfers and choose **Settings → Service → Update service**. Read and authorize the setup terminal's stated changes. Use **Install service** instead if backend setup has never completed.
 
-For an existing Git-based native installation, preserve local modifications first:
-
-```bash
-plugin="$HOME/.config/omarchy/plugins/macondo.quickshare"
-git -C "$plugin" fetch origin alpha
-git -C "$plugin" switch alpha
-git -C "$plugin" merge --ff-only origin/alpha
-omarchy restart shell
-```
-
-Finish or cancel active transfers, then explicitly choose **Settings → Service → Update service** and authorize the setup terminal's stated changes. Reloading the shell or fetching alpha does not replace the running daemon. The prerelease version is read from the manifest/actual CLI, not inferred from the branch. Arch packages use `0.3.0alpha3` for the package version while the application and corresponding source use `0.3.0-alpha.3`.
+The plugin and backend must both supply the QR feature; the panel checks the backend's `qr_send_supported` capability rather than assuming that a new QML checkout has replaced the daemon. Check the panel's service information for the installed backend version. Stable application/source version and Arch `pkgver` are all **0.3.2**; there is no prerelease `_sourcever` distinction. Reloading the shell does not update the backend or apply the advertisement-daemon or Bluetooth retention fixes.
 
 ## Returning an existing alpha checkout to main
 
-The tested alpha improvements and bounded discovery correction are included in stable **v0.2.4**. An existing native installation checked out on `alpha` can return to `main` through the same native plugin lifecycle:
+Stable **0.3.0** promotes the QR flow and lower-left companion as well as the prior fixes. An existing native installation checked out on `alpha` can return to `main` through the same native plugin lifecycle. Preserve local modifications by committing them or making a separate backup before switching:
 
 ```bash
 plugin="$HOME/.config/omarchy/plugins/macondo.quickshare"
@@ -184,6 +178,6 @@ omarchy plugin update macondo.quickshare
 omarchy restart shell
 ```
 
-Keep local code edits committed or separately backed up before switching. These commands do not force a checkout or discard modifications; if Git reports conflicting or divergent local changes, preserve and resolve them before continuing rather than resetting the checkout.
+These commands do not force a checkout or discard modifications; if Git reports conflicting or divergent local changes, preserve and resolve them before continuing rather than resetting the checkout. A plugin update requires a checkout that can advance safely to upstream `main`.
 
-The plugin ID remains `macondo.quickshare`. Configuration, language, the saved transfer-effects choice, download destination and received files remain in their existing locations. Backend **0.1.2 or newer** remains compatible and need not be downgraded. To update the backend, finish or cancel transfers and explicitly choose **Update service**, then read and authorize the setup terminal's requested changes.
+The plugin ID remains `macondo.quickshare`. Configuration, language, the saved transfer-effects choice, download destination and received files remain in their existing locations. Older supported backends retain their existing actions, but do not gain QR or the backend retention fixes from a shell reload. Finish or cancel transfers and explicitly choose **Update service** for the stable **0.3.2** backend, then read and authorize the setup terminal's requested changes. Use **Install service** if backend setup never completed.

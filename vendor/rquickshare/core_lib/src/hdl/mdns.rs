@@ -1,8 +1,12 @@
 use std::time::Duration;
 
+use anyhow::Context;
+
 use mdns_sd::{AddrType, ServiceDaemon, ServiceInfo};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
+
+use crate::peer_cache::LAN_PEER_TTL;
 
 use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
 
@@ -15,7 +19,6 @@ pub enum Visibility {
 }
 
 pub struct MDnsServer {
-    daemon: ServiceDaemon,
     service_info: ServiceInfo,
     visibility_receiver: watch::Receiver<Visibility>,
 }
@@ -31,7 +34,6 @@ impl MDnsServer {
             Self::build_service(endpoint_id, service_port, DeviceType::Laptop, hostname)?;
 
         Ok(Self {
-            daemon: ServiceDaemon::new()?,
             service_info,
             visibility_receiver,
         })
@@ -39,47 +41,62 @@ impl MDnsServer {
 
     pub async fn run(&mut self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         info!("{INNER_NAME}: service starting");
-        let monitor = self.daemon.monitor()?;
-        let mut visibility = *self.visibility_receiver.borrow();
-        if visibility != Visibility::Invisible {
-            self.daemon.register(self.service_info.clone())?;
-        }
-
-        loop {
-            tokio::select! {
-                _ = ctk.cancelled() => {
-                    info!("{INNER_NAME}: tracker cancelled, breaking");
-                    break;
-                }
-                r = monitor.recv_async() => {
-                    match r {
-                        Ok(_) => continue,
-                        Err(err) => return Err(err.into()),
-                    }
-                },
-                _ = self.visibility_receiver.changed() => {
-                    visibility = *self.visibility_receiver.borrow_and_update();
-
-                    debug!("{INNER_NAME}: visibility changed: {visibility:?}");
-                    if visibility == Visibility::Visible {
-                        self.daemon.register(self.service_info.clone())?;
-                    } else if visibility == Visibility::Invisible {
-                        let receiver = self.daemon.unregister(self.service_info.get_fullname())?;
-                        let _ = tokio::time::timeout(Duration::from_secs(3), receiver.recv_async()).await;
+        while !ctk.is_cancelled() && self.visibility_receiver.has_changed().is_ok() {
+            // Hidden receive mode must not retain an advertisement listener or
+            // the pinned mdns-sd's otherwise persistent DNS-name cache.
+            if *self.visibility_receiver.borrow_and_update() == Visibility::Invisible {
+                tokio::select! {
+                    _ = ctk.cancelled() => break,
+                    changed = self.visibility_receiver.changed() => {
+                        if changed.is_err() { break; }
                     }
                 }
+                continue;
             }
-        }
 
-        // Unregister the mDNS service - we're shutting down
-        let receiver = self.daemon.unregister(self.service_info.get_fullname())?;
-        if let Ok(Ok(event)) =
-            tokio::time::timeout(Duration::from_secs(3), receiver.recv_async()).await
-        {
-            info!("MDnsServer: service unregistered: {:?}", &event);
-        }
+            let daemon = ServiceDaemon::new()?;
+            let result: Result<(), anyhow::Error> = async {
+                daemon.register(self.service_info.clone())?;
+                // Match the browser's cache retirement period. Repeated Visible
+                // notifications must not extend this generation's lifetime.
+                let lifetime = tokio::time::sleep(LAN_PEER_TTL / 2);
+                tokio::pin!(lifetime);
+                loop {
+                    tokio::select! {
+                        _ = ctk.cancelled() => break,
+                        _ = &mut lifetime => break,
+                        changed = self.visibility_receiver.changed() => {
+                            if changed.is_err()
+                                || *self.visibility_receiver.borrow_and_update() == Visibility::Invisible {
+                                break;
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }.await;
 
-        let _ = self.daemon.shutdown();
+            // Retire this generation on every exit, including setup errors.
+            // No monitor is subscribed: its discarded events previously added
+            // a bounded channel that could obstruct daemon shutdown.
+            let unregister: Result<(), anyhow::Error> = async {
+                let stopped = daemon.unregister(self.service_info.get_fullname())?;
+                tokio::time::timeout(Duration::from_secs(3), stopped.recv_async())
+                    .await.context("mDNS advertisement unregister timed out")??;
+                Ok(())
+            }.await;
+            // Shutdown is attempted even if unregister failed. Do not create
+            // another generation until its predecessor acknowledges shutdown.
+            let shutdown: Result<(), anyhow::Error> = async {
+                let stopped = daemon.shutdown()?;
+                tokio::time::timeout(Duration::from_secs(3), stopped.recv_async())
+                    .await.context("mDNS advertisement shutdown timed out")??;
+                Ok(())
+            }.await;
+            result?;
+            unregister?;
+            shutdown?;
+        }
         Ok(())
     }
 
@@ -90,7 +107,7 @@ impl MDnsServer {
         hostname: &str,
     ) -> Result<ServiceInfo, anyhow::Error> {
         let name = gen_mdns_name(endpoint_id);
-        info!("Broadcasting with: {hostname}");
+        debug!("Preparing mDNS service for: {hostname}");
         let endpoint_info = gen_mdns_endpoint_info(device_type as u8, hostname);
 
         let properties = [("n", endpoint_info)];
@@ -105,5 +122,26 @@ impl MDnsServer {
         .enable_addr_auto(AddrType::V4);
 
         Ok(si)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn closing_visibility_owner_stops_hidden_advertiser() {
+        let (owner, visibility) = watch::channel(Visibility::Invisible);
+        let mut server = MDnsServer::new(*b"TEST", 1234, visibility, "hidden.local.").unwrap();
+        let run = server.run(CancellationToken::new());
+        tokio::pin!(run);
+        tokio::select! {
+            _ = &mut run => panic!("advertiser stopped while its visibility owner was alive"),
+            _ = tokio::task::yield_now() => {}
+        }
+        drop(owner);
+        tokio::time::timeout(Duration::from_secs(2), run)
+            .await.expect("closed visibility owner must terminate the actor")
+            .expect("hidden advertiser shutdown");
     }
 }

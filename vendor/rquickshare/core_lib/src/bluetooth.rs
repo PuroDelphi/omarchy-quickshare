@@ -43,8 +43,8 @@
 //! GATT exposes discovery metadata only; sessions still use SDP/RFCOMM. BLE
 //! setup failure is logged with its full chain and leaves Classic operational.
 //! Remote regular headers are bloom-filtered before a bounded GATT slot fetch.
-//! Successful and failed fetches are cached until that header changes; only
-//! radio ServiceData observations renew their lease, not connection properties.
+//! Discovery metadata shares a 128-address/45-second lease. A bounded global
+//! signal stream avoids retaining BlueR subscriptions for rotating devices.
 //!
 //! A persistent D-Bus owner explicitly starts/stops only our discovery session.
 //! Per-controller serialization pauses scanning and awaits Discovering=false
@@ -85,8 +85,8 @@ use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use bluer::rfcomm::{Profile, ProfileHandle, ReqError, Role};
 use bluer::{l2cap, rfcomm};
-use bluer::{Adapter, AdapterEvent, AdapterProperty, Address, AddressType, Session};
-use futures::{stream::SelectAll, StreamExt};
+use bluer::{Adapter, Address, AddressType, Session};
+use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
@@ -97,6 +97,10 @@ use uuid::Uuid;
 use crate::channel::{ChannelDirection, ChannelMessage};
 use crate::transport::TransportStream;
 use crate::{DeviceType, EndpointInfo, Visibility};
+
+#[path = "bluetooth_discovery.rs"]
+mod discovery;
+use discovery::{DiscoveryRecords, Observation};
 
 pub const SERVICE_UUID: Uuid = Uuid::from_u128(0xa82efa21ae5c3dde9bbcf16da7b16c5a);
 const BLE_UUID: Uuid = Uuid::from_u128(0x0000fef300001000800000805f9b34fb);
@@ -140,16 +144,21 @@ struct HciConnectionList {
 }
 
 impl HciConnectionList {
-    fn has_le_bearer(&self) -> Result<bool> {
-        // A full snapshot can have omitted another link. Never infer safety
-        // from a truncated list, including a list containing only Classic.
+    fn links(&self) -> Result<&[HciConnection]> {
         ensure!(
             usize::from(self.count) < self.connections.len(),
             "Bluetooth connection snapshot reached its capacity"
         );
-        Ok(self.connections[..usize::from(self.count)]
-            .iter()
-            .any(|link| link.link_type == LE_LINK && link.state != BT_CLOSED))
+        Ok(&self.connections[..usize::from(self.count)])
+    }
+
+    fn has_le_bearer(&self) -> Result<bool> {
+        Ok(self.links()?.iter().any(|link| link.link_type == LE_LINK && link.state != BT_CLOSED))
+    }
+
+    fn has_classic_bearer(&self, mut address: Address) -> Result<bool> {
+        address.0.reverse();
+        Ok(self.links()?.iter().any(|link| link.link_type == 1 && link.state != BT_CLOSED && link.address == address.0))
     }
 }
 
@@ -179,7 +188,7 @@ impl HciConnections {
         })
     }
 
-    fn has_le_bearer(&self) -> Result<bool> {
+    fn snapshot(&self) -> Result<HciConnectionList> {
         let mut list = HciConnectionList {
             index: self.index,
             count: MAX_CONTROLLER_CONNECTIONS as u16,
@@ -193,8 +202,11 @@ impl HciConnections {
             return Err(io::Error::last_os_error())
                 .context("reading Bluetooth controller connections");
         }
-        list.has_le_bearer()
+        Ok(list)
     }
+
+    fn has_le_bearer(&self) -> Result<bool> { self.snapshot()?.has_le_bearer() }
+    fn has_classic_bearer(&self, address: Address) -> Result<bool> { self.snapshot()?.has_classic_bearer(address) }
 }
 // All scanner ownership and HCI-changing transitions for this controller go
 // through one lock. D-Bus StopDiscovery is issued by the same persistent owner
@@ -203,6 +215,7 @@ impl HciConnections {
 struct RadioCoordinator {
     adapter: Adapter,
     bus: zbus::Connection,
+    owner: String,
     path: String,
     state: Mutex<RadioState>,
     paused: watch::Sender<bool>,
@@ -274,44 +287,30 @@ impl RadioState {
 
     fn begin_ble_header_read(
         &self,
-        reads: &mut HashMap<Address, BleHeaderRead>,
-        address: Address,
+        read: &mut Option<BleHeaderRead>,
         header: BleLegacyHeader,
         now: Instant,
     ) -> bool {
         if !self.permits_scan(now) {
             return false;
         }
-        use std::collections::hash_map::Entry;
-        match reads.entry(address) {
-            Entry::Occupied(mut entry) => {
-                if entry.get().header == header {
-                    return false;
-                }
-                entry.insert(BleHeaderRead {
-                    header,
-                    frame: None,
-                });
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(BleHeaderRead {
-                    header,
-                    frame: None,
-                });
-            }
+        if read.as_ref().is_some_and(|previous| previous.header == header) {
+            return false;
         }
+        *read = Some(BleHeaderRead { header, frame: None });
         true
     }
 }
 
 async fn bluez_call<T: serde::Serialize + zbus::zvariant::Type>(
     bus: &zbus::Connection,
+    owner: &str,
     path: &str,
     interface: &str,
     method: &str,
     body: &T,
 ) -> Result<()> {
-    let proxy = zbus::Proxy::new(bus, "org.bluez", path, interface).await?;
+    let proxy = zbus::Proxy::new(bus, owner, path, interface).await?;
     timeout(OPERATION_TIMEOUT, proxy.call::<_, _, ()>(method, body))
         .await
         .with_context(|| format!("BlueZ {interface}.{method} timed out"))?
@@ -323,6 +322,7 @@ impl RadioCoordinator {
         let bus = timeout(OPERATION_TIMEOUT, zbus::Connection::system())
             .await
             .context("opening owned Bluetooth coordination bus timed out")??;
+        let owner = discovery::bluez_owner(&bus).await?;
         let (paused, _) = watch::channel(true);
         let (schedule, _) = watch::channel(None);
         let connections = HciConnections::new(adapter.name())?;
@@ -330,6 +330,7 @@ impl RadioCoordinator {
             path: format!("/org/bluez/{}", adapter.name()),
             adapter,
             bus,
+            owner,
             state: Mutex::new(RadioState {
                 scan_requested: false,
                 scan_active: false,
@@ -393,19 +394,20 @@ impl RadioCoordinator {
 
 
     async fn wait_discovering(&self, wanted: bool) -> Result<()> {
-        let events = self.adapter.events().await?;
-        tokio::pin!(events);
+        let mut events = discovery::signals(&self.bus, &self.owner, Some(&self.path)).await?;
         if self.adapter.is_discovering().await? == wanted {
             return Ok(());
         }
         timeout(OPERATION_TIMEOUT, async {
             while let Some(event) = events.next().await {
-                match event {
-                    AdapterEvent::PropertyChanged(AdapterProperty::Discovering(value))
-                        if value == wanted => return Ok(()),
-                    AdapterEvent::PropertyChanged(AdapterProperty::Powered(false)) =>
-                        bail!("Bluetooth powered off while awaiting discovery transition"),
-                    _ => (),
+                let event = event?;
+                if let Some(properties) = discovery::changed_properties(&event, "org.bluez.Adapter1")? {
+                    if properties.get("Discovering").is_some_and(|value| bool::try_from(value).ok() == Some(wanted)) {
+                        return Ok(());
+                    }
+                    if properties.get("Powered").is_some_and(|value| bool::try_from(value).ok() == Some(false)) {
+                        bail!("Bluetooth powered off while awaiting discovery transition");
+                    }
                 }
             }
             bail!("Bluetooth adapter removed while awaiting discovery transition")
@@ -419,6 +421,7 @@ impl RadioCoordinator {
         if state.scan_active {
             bluez_call(
                 &self.bus,
+                &self.owner,
                 &self.path,
                 "org.bluez.Adapter1",
                 "StopDiscovery",
@@ -459,6 +462,7 @@ impl RadioCoordinator {
         state.scan_active = true;
         bluez_call(
             &self.bus,
+            &self.owner,
             &self.path,
             "org.bluez.Adapter1",
             "StartDiscovery",
@@ -511,6 +515,7 @@ impl RadioCoordinator {
                 .into();
                 bluez_call(
                     &self.bus,
+                    &self.owner,
                     &self.path,
                     "org.bluez.Adapter1",
                     "SetDiscoveryFilter",
@@ -523,6 +528,7 @@ impl RadioCoordinator {
                 let empty: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
                 bluez_call(
                     &self.bus,
+                    &self.owner,
                     &self.path,
                     "org.bluez.Adapter1",
                     "SetDiscoveryFilter",
@@ -638,8 +644,7 @@ impl Bluetooth {
             .server
             .try_lock()
             .context("Bluetooth RFCOMM callback dispatcher already running")?;
-        let adapter_events = self.adapter.events().await?;
-        tokio::pin!(adapter_events);
+        let mut adapter_events = discovery::signals(&self.radio.bus, &self.radio.owner, Some(&self.radio.path)).await?;
         // Radio transitions can wait for another peer's GATT cleanup. A
         // single lifetime task owns announcements so those waits never stall
         // the persistent Profile1 callback dispatcher or established sockets.
@@ -648,6 +653,8 @@ impl Bluetooth {
             tokio::spawn(self.clone().run_announcements(announcements_ctk.clone()));
         let mut announcements_finished = false;
         self.availability(true);
+        let mut owner_health = tokio::time::interval(Duration::from_secs(5));
+        owner_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let outcome: Result<()> = async {
             loop {
                 if ctk.is_cancelled() { break; }
@@ -662,11 +669,16 @@ impl Bluetooth {
                     changed = visibility.changed() => {
                         changed.context("Bluetooth visibility owner closed")?;
                     }
+                    _ = owner_health.tick() => {
+                        ensure!(discovery::bluez_owner(&self.radio.bus).await? == self.radio.owner,
+                            "BlueZ owner changed; Bluetooth backend must be restarted");
+                        ensure!(self.adapter.address().await? == self.local_address,
+                            "Bluetooth adapter identity changed");
+                    }
                     event = adapter_events.next() => {
-                        match event.context("Bluetooth adapter was removed")? {
-                            AdapterEvent::PropertyChanged(AdapterProperty::Powered(false)) =>
-                                bail!("Bluetooth powered off while backend was running"),
-                            _ => (),
+                        let event = event.context("Bluetooth adapter was removed")??;
+                        if matches!(discovery::observation(&event, &self.radio.path)?, Some(Observation::PoweredOff)) {
+                            bail!("Bluetooth powered off while backend was running");
                         }
                     }
                     request = server.next() => {
@@ -848,107 +860,62 @@ impl Bluetooth {
             .scanning
             .try_lock()
             .context("Bluetooth discovery already running")?;
-        let mut peers: HashMap<Address, Peer> = HashMap::new();
-        let mut ble_headers: HashMap<Address, BleHeaderRead> = HashMap::new();
+        let mut records = DiscoveryRecords::default();
         let outcome: Result<()> = async {
-            // Use our own device property streams: only fresh radio properties
-            // refresh a peer's lease, not unrelated Trusted/Connected changes.
-            // Subscribe before StartDiscovery, and watch cached devices without
-            // giving their old properties a new lease.
-            let discovery = self.adapter.events().await?;
-            tokio::pin!(discovery);
-            let mut changes = SelectAll::new();
-            let mut watched: HashMap<Address, CancellationToken> = HashMap::new();
-            for address in self.adapter.device_addresses().await? {
-                let device = self.adapter.device(address)?;
-                let events = device.events().await?;
-                let lifetime = CancellationToken::new();
-                changes.push(events.take_until(lifetime.clone().cancelled_owned())
-                    .map(move |event| (address, event)).boxed());
-                watched.insert(address, lifetime);
-            }
+            // One bounded subscription, not one BlueR receiver per MAC. BlueR
+            // retains closed per-device subscriptions until another event.
+            let mut events = discovery::signals(&self.radio.bus, &self.radio.owner, None).await?;
             self.radio.set_scanning(true).await?;
             let mut paused = self.radio.paused.subscribe();
             let mut expiry = tokio::time::interval(Duration::from_secs(5));
+            expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                let (event, evidence, advertised) = tokio::select! {
+                let observation = tokio::select! {
                     _ = ctk.cancelled() => break,
                     changed = paused.changed() => {
                         changed.context("Bluetooth radio pause owner closed")?;
                         continue;
                     }
-                    event = discovery.next() => (event.context("Bluetooth discovery ended unexpectedly")?, DiscoveryEvidence::Added, None),
-                    Some((address, property)) = changes.next(), if !changes.is_empty() => {
-                        match property {
-                            bluer::DeviceEvent::PropertyChanged(bluer::DeviceProperty::Rssi(_)) |
-                            bluer::DeviceEvent::PropertyChanged(bluer::DeviceProperty::Name(_)) |
-                            bluer::DeviceEvent::PropertyChanged(bluer::DeviceProperty::Class(_)) =>
-                                (AdapterEvent::DeviceAdded(address), DiscoveryEvidence::Classic, None),
-                            bluer::DeviceEvent::PropertyChanged(bluer::DeviceProperty::ServiceData(data)) => {
-                                if !nearby_service_observation(&data) { continue; }
-                                (AdapterEvent::DeviceAdded(address), DiscoveryEvidence::Ble, Some(data))
-                            }
-                            _ => continue,
-                        }
-                    }
                     _ = expiry.tick() => {
-                        let stale: Vec<_> = peers.iter().filter(|(_, peer)| peer.seen.elapsed() >= PEER_LIFETIME)
-                            .map(|(address, _)| *address).collect();
-                        for address in stale { remove_peer(&mut peers, address, &sender); }
+                        ensure!(discovery::bluez_owner(&self.radio.bus).await? == self.radio.owner,
+                            "BlueZ owner changed during Bluetooth discovery");
+                        ensure!(self.adapter.address().await? == self.local_address,
+                            "Bluetooth adapter identity changed during discovery");
+                        records.expire(Instant::now(), &sender);
+                        continue;
+                    }
+                    message = events.next() => {
+                        let message = message.context("Bluetooth discovery ended unexpectedly")??;
+                        discovery::observation(&message, &self.radio.path)?
+                    }
+                };
+                let (address, evidence, advertised) = match observation {
+                    Some(Observation::Added(address)) => (address, DiscoveryEvidence::Added, None),
+                    Some(Observation::Radio(address, evidence, data)) => (address, evidence, data),
+                    Some(Observation::Removed(address)) => {
+                        records.remove(address, &sender);
+                        continue;
+                    }
+                    Some(Observation::PoweredOff) => bail!("Bluetooth powered off during discovery"),
+                    None => continue,
+                };
+                if *paused.borrow() { continue; }
+                let observed = Instant::now();
+                let index = records.admit(address, observed, &sender);
+                let device = self.adapter.device(address)?;
+                let observation = match self.read_peer(&device, evidence, advertised.as_ref(), &mut records.entries[index].header, &ctk).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if self.radio.state.lock().await.failed { return Err(error); }
+                        warn!("Reading Bluetooth discovery for {address} failed: {error:#}");
                         continue;
                     }
                 };
-                match event {
-                    AdapterEvent::DeviceAdded(address) => {
-                        let observed = Instant::now();
-                        let device = self.adapter.device(address)?;
-                        if !watched.contains_key(&address) {
-                            let events = device.events().await?;
-                            let lifetime = CancellationToken::new();
-                            changes.push(events.take_until(lifetime.clone().cancelled_owned())
-                                .map(move |event| (address, event)).boxed());
-                            watched.insert(address, lifetime);
-                        }
-                        if *paused.borrow() { continue; }
-                        let observation = match self.read_peer(
-                            &device, evidence, advertised.as_ref(), &mut ble_headers, &ctk,
-                        ).await {
-                            Ok(value) => value,
-                            Err(error) => {
-                                if self.radio.state.lock().await.failed { return Err(error); }
-                                warn!("Reading Bluetooth discovery for {address} failed: {error:#}");
-                                continue;
-                            }
-                        };
-                        if let Some((endpoint, source)) = observation {
-                            let changed = peers.get(&address).map(|peer| {
-                                peer.endpoint.id != endpoint.id || peer.endpoint.name != endpoint.name ||
-                                peer.endpoint.rtype != endpoint.rtype
-                            }).unwrap_or(true);
-                            if changed {
-                                remove_peer(&mut peers, address, &sender);
-                                let _ = sender.send(endpoint.clone());
-                            }
-                            peers.insert(address, Peer { endpoint, seen: observed, source });
-                        } else if peers.get(&address).is_some_and(|peer| evidence.observes(peer.source)) {
-                            remove_peer(&mut peers, address, &sender);
-                        }
-                    }
-                    AdapterEvent::DeviceRemoved(address) => {
-                        ble_headers.remove(&address);
-                        if let Some(lifetime) = watched.remove(&address) { lifetime.cancel(); }
-                        remove_peer(&mut peers, address, &sender);
-                    }
-                    AdapterEvent::PropertyChanged(AdapterProperty::Powered(false)) => bail!("Bluetooth powered off during discovery"),
-                    _ => (),
-                }
+                records.update(index, observation, evidence, observed, &sender);
             }
             Ok(())
         }.await;
-        for (_, mut peer) in peers {
-            peer.endpoint.present = Some(false);
-            let _ = sender.send(peer.endpoint);
-        }
+        records.clear(&sender);
         let cleanup = self.radio.set_scanning(false).await;
         match cleanup {
             Ok(()) => outcome,
@@ -963,7 +930,7 @@ impl Bluetooth {
         device: &bluer::Device,
         evidence: DiscoveryEvidence,
         advertised: Option<&BleServiceData>,
-        ble_headers: &mut HashMap<Address, BleHeaderRead>,
+        ble_header: &mut Option<BleHeaderRead>,
         ctk: &CancellationToken,
     ) -> Result<Option<(EndpointInfo, DiscoverySource)>> {
         if device.rssi().await?.is_none() {
@@ -993,20 +960,13 @@ impl Bluetooth {
                     let frame = if let Ok(frame) = parse_ble_service_data(bytes) {
                         Some(frame)
                     } else if let Ok(header) = parse_ble_legacy_header(bytes) {
-                        let address = device.address();
-                        // A timeout/failure must not trigger another read of
-                        // the same header on the next duplicate radio event.
-                        if ble_headers
-                            .get(&address)
-                            .is_none_or(|read| read.header != header)
-                        {
+                        if ble_header.as_ref().is_none_or(|read| read.header != header) {
                             match self
-                                .read_remote_ble_slots(device, header, ble_headers, ctk)
+                                .read_remote_ble_slots(device, header, ble_header, ctk)
                                 .await
                             {
                                 Ok(frame) => {
-                                    if let Some(read) = ble_headers
-                                        .get_mut(&address)
+                                    if let Some(read) = ble_header.as_mut()
                                         .filter(|read| read.header == header)
                                     {
                                         read.frame = frame;
@@ -1016,12 +976,11 @@ impl Bluetooth {
                                     if self.radio.state.lock().await.failed {
                                         return Err(error);
                                     }
-                                    warn!("Nearby GATT discovery for {address} unavailable: {error:#}");
+                                    warn!("Nearby GATT discovery for {} unavailable: {error:#}", device.address());
                                 }
                             }
                         }
-                        ble_headers
-                            .get(&address)
+                        ble_header.as_ref()
                             .filter(|read| read.header == header)
                             .and_then(|read| read.frame.clone())
                     } else {
@@ -1061,7 +1020,7 @@ impl Bluetooth {
         &self,
         device: &bluer::Device,
         header: BleLegacyHeader,
-        ble_headers: &mut HashMap<Address, BleHeaderRead>,
+        ble_header: &mut Option<BleHeaderRead>,
         ctk: &CancellationToken,
     ) -> Result<Option<(Address, ParsedEndpoint)>> {
         let Some(mut radio) = self.radio.pause_gatt().await? else {
@@ -1070,7 +1029,7 @@ impl Bluetooth {
         // The allowance is consumed only after an exclusive central-role
         // permit. A packet queued across an AD transition is deferred, not
         // recorded as a failed read and not retried after an actual attempt.
-        if !radio.begin_ble_header_read(ble_headers, device.address(), header, Instant::now()) {
+        if !radio.begin_ble_header_read(ble_header, header, Instant::now()) {
             self.radio.resume(&mut radio).await?;
             return Ok(None);
         }
@@ -1080,47 +1039,28 @@ impl Bluetooth {
             radio: self.radio.clone(),
         };
         let fetch = async {
-            if !device.is_connected().await? {
-                // Arm before Connect; cancellation may have created the ACL.
-                // Preexisting connections are never disconnected.
+            let path = discovery::device_path(&self.radio.path, device.address());
+            let policy = discovery::device_policy(&self.radio.bus, &self.radio.owner, &path).await?;
+            if policy.blocked { return Ok(None); }
+            if !policy.connected {
+                let count = discovery::device_count(&self.radio.bus, &self.radio.owner, &self.radio.path).await?;
+                if !policy.may_connect(count) || self.radio.connections.has_classic_bearer(device.address())? {
+                    return Ok(None);
+                }
+                // Live adapter-wide census, not a resettable process quota:
+                // public/static Connect promotions remain in BlueZ after
+                // Disconnect and across our restarts. Never RemoveDevice.
                 connection.device = Some(device.clone());
-                device
-                    .connect()
-                    .await
-                    .context("connecting advertisement GATT bearer")?;
-            }
-            let mut read_slots = 0_u16;
-            for service in device
-                .services()
-                .await
-                .context("resolving advertisement GATT services")?
-            {
-                if service.uuid().await? != BLE_UUID {
-                    continue;
-                }
-                for characteristic in service.characteristics().await? {
-                    let uuid = characteristic.uuid().await?;
-                    if !is_ble_advertisement_slot(uuid, slots) {
-                        continue;
+                if let Err(error) = bluez_call(&self.radio.bus, &self.radio.owner, &path, "org.bluez.Device1", "Connect", &()).await {
+                    if matches!(error.downcast_ref::<zbus::Error>(),
+                        Some(zbus::Error::MethodError(name, _, _)) if matches!(name.as_str(),
+                            "org.bluez.Error.AlreadyConnected" | "org.bluez.Error.InProgress")) {
+                        connection.device = None;
                     }
-                    let slot = (uuid.as_u128() - BLE_ADVERTISEMENT_SLOT.as_u128()) as u8;
-                    let mask = 1_u16 << slot;
-                    if read_slots & mask != 0 {
-                        continue;
-                    }
-                    read_slots |= mask;
-                    // BlueZ ReadValue performs ATT long reads. Exactly one
-                    // logical read per advertised slot, no data socket.
-                    let body = characteristic
-                        .read()
-                        .await
-                        .context("reading advertisement GATT slot")?;
-                    if let Ok(frame) = parse_ble_service_data(&body) {
-                        return Ok(Some(frame));
-                    }
+                    return Err(error.context("connecting advertisement GATT bearer"));
                 }
             }
-            Ok(None)
+            discovery::read_slots(&self.radio.bus, &self.radio.owner, &path, slots).await
         };
         let result: Result<_> = tokio::select! {
             _ = ctk.cancelled() => Err(anyhow::anyhow!("Nearby GATT discovery canceled")),
@@ -1299,6 +1239,7 @@ impl Bluetooth {
             announcements.application_registered = true;
             bluez_call(
                 &self.radio.bus,
+                &self.radio.owner,
                 &self.radio.path,
                 "org.bluez.GattManager1",
                 "RegisterApplication",
@@ -2043,6 +1984,7 @@ impl BleAnnouncements {
     ) -> Result<()> {
         match bluez_call(
             &self.radio.bus,
+            &self.radio.owner,
             &self.radio.path,
             interface,
             method,
@@ -2091,6 +2033,7 @@ impl BleAnnouncements {
         // BlueZ 5.87 advertising.c matches registrations by owner and path.
         bluez_call(
             &self.radio.bus,
+            &self.radio.owner,
             &self.radio.path,
             "org.bluez.LEAdvertisingManager1",
             "RegisterAdvertisement",
@@ -2580,24 +2523,24 @@ struct GattDiscoveryConnection {
 impl GattDiscoveryConnection {
     async fn close(&mut self) -> Result<()> {
         if let Some(device) = self.device.take() {
-            let events = device.events().await?;
-            tokio::pin!(events);
+            let path = discovery::device_path(&self.radio.path, device.address());
+            let mut events = discovery::signals(&self.radio.bus, &self.radio.owner, Some(&path)).await?;
             let result: Result<()> = async {
-                timeout(OPERATION_TIMEOUT, device.disconnect())
-                    .await
-                    .context("disconnecting owned advertisement GATT bearer timed out")??;
-                if !device.is_connected().await? {
+                let policy = discovery::device_policy(&self.radio.bus, &self.radio.owner, &path).await?;
+                ensure!(policy.may_disconnect(), "GATT device acquired protected user state; refusing Disconnect");
+                ensure!(!self.radio.connections.has_classic_bearer(device.address())?,
+                    "Classic connection now shares this device; refusing aggregate Disconnect");
+                bluez_call(&self.radio.bus, &self.radio.owner, &path, "org.bluez.Device1", "Disconnect", &()).await?;
+                if !discovery::device_policy(&self.radio.bus, &self.radio.owner, &path).await?.connected {
                     return Ok(());
                 }
                 timeout(OPERATION_TIMEOUT, async {
                     while let Some(event) = events.next().await {
-                        if matches!(
-                            event,
-                            bluer::DeviceEvent::PropertyChanged(bluer::DeviceProperty::Connected(
-                                false
-                            ))
-                        ) {
-                            return Ok(());
+                        let event = event?;
+                        if let Some(properties) = discovery::changed_properties(&event, "org.bluez.Device1")? {
+                            if properties.get("Connected").is_some_and(|value| bool::try_from(value).ok() == Some(false)) {
+                                return Ok(());
+                            }
                         }
                     }
                     bail!("GATT device removed before disconnect confirmation")
@@ -2649,24 +2592,6 @@ struct Peer {
     source: DiscoverySource,
 }
 
-fn remove_peer(
-    peers: &mut HashMap<Address, Peer>,
-    address: Address,
-    sender: &broadcast::Sender<EndpointInfo>,
-) {
-    if let Some(mut peer) = peers.remove(&address) {
-        // One Classic route can be advertised by multiple rotating BLE scan
-        // addresses. Losing one source must not remove a still-live route.
-        if peers
-            .values()
-            .any(|other| other.endpoint.id == peer.endpoint.id)
-        {
-            return;
-        }
-        peer.endpoint.present = Some(false);
-        let _ = sender.send(peer.endpoint);
-    }
-}
 
 fn parse_route(route: &str) -> Result<Address> {
     let (address, uuid) = route
@@ -3167,7 +3092,7 @@ mod tests {
         let address = Address::new([1, 2, 3, 4, 5, 6]);
         let body = encode_ble_service_data(*b"AB12", &fixture_info(), address).unwrap();
         let header = parse_ble_legacy_header(&encode_ble_legacy_header(&body)).unwrap();
-        let mut reads = HashMap::new();
+        let mut reads = None;
         let now = Instant::now();
         let radio = RadioState {
             scan_requested: true,
@@ -3177,19 +3102,19 @@ mod tests {
             window: None,
             le_connected: false,
         };
-        assert!(radio.begin_ble_header_read(&mut reads, address, header, now));
+        assert!(radio.begin_ble_header_read(&mut reads, header, now));
         // No frame was installed: this is the timeout/failed-read state.
         for _ in 0..10 {
-            assert!(!radio.begin_ble_header_read(&mut reads, address, header, now));
+            assert!(!radio.begin_ble_header_read(&mut reads, header, now));
         }
-        reads.get_mut(&address).unwrap().frame = Some(parse_ble_service_data(&body).unwrap());
-        assert!(!radio.begin_ble_header_read(&mut reads, address, header, now));
-        assert!(reads[&address].frame.is_some());
+        reads.as_mut().unwrap().frame = Some(parse_ble_service_data(&body).unwrap());
+        assert!(!radio.begin_ble_header_read(&mut reads, header, now));
+        assert!(reads.as_ref().unwrap().frame.is_some());
         let mut changed = header;
         changed.wire[11] ^= 1;
-        assert!(radio.begin_ble_header_read(&mut reads, address, changed, now));
-        assert!(reads[&address].frame.is_none());
-        assert!(!radio.begin_ble_header_read(&mut reads, address, changed, now));
+        assert!(radio.begin_ble_header_read(&mut reads, changed, now));
+        assert!(reads.as_ref().unwrap().frame.is_none());
+        assert!(!radio.begin_ble_header_read(&mut reads, changed, now));
     }
 
     #[test]
@@ -3207,25 +3132,25 @@ mod tests {
             window: Some(scan),
             le_connected: false,
         };
-        let mut reads = HashMap::new();
-        assert!(radio.begin_ble_header_read(&mut reads, address, header, now));
-        reads.get_mut(&address).unwrap().frame = Some(parse_ble_service_data(&body).unwrap());
+        let mut reads = None;
+        assert!(radio.begin_ble_header_read(&mut reads, header, now));
+        reads.as_mut().unwrap().frame = Some(parse_ble_service_data(&body).unwrap());
         let mut changed = header;
         changed.wire[11] ^= 1;
-        assert!(!radio.begin_ble_header_read(&mut reads, address, changed, scan.until));
-        assert_eq!(reads[&address].header, header);
-        assert!(reads[&address].frame.is_some());
+        assert!(!radio.begin_ble_header_read(&mut reads, changed, scan.until));
+        assert_eq!(reads.as_ref().unwrap().header, header);
+        assert!(reads.as_ref().unwrap().frame.is_some());
         let ad = scan.next(scan.until);
         radio.window = Some(ad);
         radio.advertisement_active = true;
-        assert!(!radio.begin_ble_header_read(&mut reads, address, changed, scan.until));
-        assert_eq!(reads[&address].header, header);
+        assert!(!radio.begin_ble_header_read(&mut reads, changed, scan.until));
+        assert_eq!(reads.as_ref().unwrap().header, header);
         radio.window = Some(ad.next(ad.until));
         radio.advertisement_active = false;
-        assert!(radio.begin_ble_header_read(&mut reads, address, changed, ad.until));
-        assert_eq!(reads[&address].header, changed);
-        assert!(reads[&address].frame.is_none());
-        assert!(!radio.begin_ble_header_read(&mut reads, address, changed, ad.until));
+        assert!(radio.begin_ble_header_read(&mut reads, changed, ad.until));
+        assert_eq!(reads.as_ref().unwrap().header, changed);
+        assert!(reads.as_ref().unwrap().frame.is_none());
+        assert!(!radio.begin_ble_header_read(&mut reads, changed, ad.until));
     }
 
     #[test]
@@ -3818,5 +3743,27 @@ mod tests {
         ] {
             assert!(parse_route(route).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_guard_tests {
+    use super::*;
+
+    #[test]
+    fn classic_connections_protect_only_their_own_device_from_gatt_disconnect() {
+        let address = Address::new([1, 2, 3, 4, 5, 6]);
+        let mut native = address.0;
+        native.reverse();
+        let mut links = HciConnectionList { index: 0, count: 2, connections: [HciConnection::default(); MAX_CONTROLLER_CONNECTIONS] };
+        links.connections[0] = HciConnection { address: native, link_type: LE_LINK, state: 1, ..Default::default() };
+        links.connections[1] = HciConnection { address: [9; 6], link_type: 1, state: 1, ..Default::default() };
+        assert!(!links.has_classic_bearer(address).unwrap());
+        links.connections[1].address = native;
+        assert!(links.has_classic_bearer(address).unwrap());
+        links.connections[1].state = BT_CLOSED;
+        assert!(!links.has_classic_bearer(address).unwrap());
+        links.count = MAX_CONTROLLER_CONNECTIONS as u16;
+        assert!(links.has_classic_bearer(address).is_err());
     }
 }

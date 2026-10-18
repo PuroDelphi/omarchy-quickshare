@@ -1,8 +1,7 @@
 # Build with scripts/build-package.sh from a source checkout.
 pkgname=omarchy-quickshare
-pkgver=0.3.0alpha3
+pkgver=0.3.2
 pkgrel=1
-_sourcever=0.3.0-alpha.3
 pkgdesc='Quick Share Rust backend for the native Omarchy plugin'
 url='https://github.com/PuroDelphi/omarchy-quickshare'
 arch=('x86_64' 'aarch64')
@@ -10,7 +9,7 @@ license=('MIT' 'GPL-3.0-only')
 # NetworkManager's shared IPv4 method starts its own dnsmasq; do not enable dnsmasq.service.
 depends=('bluez' 'dbus' 'networkmanager' 'dnsmasq' 'xdg-desktop-portal' 'quickshell' 'omarchy' 'jq' 'nautilus' 'nautilus-python' 'python' 'python-gobject' 'gtk4')
 makedepends=('rust' 'cargo' 'protobuf' 'pkgconf')
-source=("$pkgname-$_sourcever.tar.gz")
+source=("$pkgname-$pkgver.tar.gz")
 # The builder materializes the actual archive digest in the distributable PKGBUILD.
 sha256sums=("${QUICKSHARE_SOURCE_SHA256:?Use scripts/build-package.sh}")
 [[ ${sha256sums[0]} =~ ^[[:xdigit:]]{64}$ ]] || {
@@ -19,17 +18,17 @@ sha256sums=("${QUICKSHARE_SOURCE_SHA256:?Use scripts/build-package.sh}")
 }
 
 prepare() {
-  cd "$srcdir/$pkgname-$_sourcever"
+  cd "$srcdir/$pkgname-$pkgver"
   RUSTC=/usr/bin/rustc /usr/bin/cargo fetch --locked
 }
 
 build() {
-  cd "$srcdir/$pkgname-$_sourcever"
+  cd "$srcdir/$pkgname-$pkgver"
   RUSTC=/usr/bin/rustc /usr/bin/cargo build --release --locked --offline --target-dir target --package omarchy-quickshare
 }
 
 package() {
-  cd "$srcdir/$pkgname-$_sourcever"
+  cd "$srcdir/$pkgname-$pkgver"
   install -Dm755 target/release/omarchy-quickshare "$pkgdir/usr/bin/omarchy-quickshare"
   install -Dm644 packaging/omarchy-quickshare.service "$pkgdir/usr/lib/systemd/user/omarchy-quickshare.service"
   install -Dm644 packaging/system-binary.conf "$pkgdir/usr/lib/systemd/user/omarchy-quickshare.service.d/binary.conf"
@@ -41,7 +40,7 @@ package() {
   install -Dm644 vendor/THIRD_PARTY_NOTICES.txt "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.txt"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 preview.png "$pkgdir/usr/share/doc/$pkgname/preview.png"
-  install -Dm644 "$startdir/$pkgname-$_sourcever.tar.gz" "$pkgdir/usr/share/doc/$pkgname/source/source.tar.gz"
+  install -Dm644 "$startdir/$pkgname-$pkgver.tar.gz" "$pkgdir/usr/share/doc/$pkgname/source/source.tar.gz"
   install -Dm644 docs/VERIFICATION.md "$pkgdir/usr/share/doc/$pkgname/docs/VERIFICATION.md"
   install -Dm644 docs/USER_GUIDE.md "$pkgdir/usr/share/doc/$pkgname/docs/USER_GUIDE.md"
   install -Dm644 docs/INSTALLATION.md "$pkgdir/usr/share/doc/$pkgname/docs/INSTALLATION.md"

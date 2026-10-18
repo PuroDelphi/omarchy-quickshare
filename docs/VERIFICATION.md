@@ -108,13 +108,13 @@ A private executable exercised production mDNS record decoding, real TCP connect
 
 These records were synthetic and lease deadlines were explicit test instants, not a claimed 120-second wall-clock wait or native Android run. No multicast advertisement, radio change, network configuration change or host-service update was performed. The temporary runtime modules and executable were removed after observation.
 
-## Companion placement — alpha
+## Historical companion placement — alpha
 
 The closed-panel companion was moved to the lower-left corner without changing artwork, notification logic, activity captions, input handling or the panel halo. The actual Quickshell layer-shell component was exercised both from the installed checkout and the alpha source. Sending over LAN, receiving over Bluetooth and preparation remained visible with bars at the top, left, bottom and right; the overlay stayed inside the screen, clear of the bar and input-transparent. Both checkouts produced identical settled geometry, and disabling effects hid the surface.
 
 A native Omarchy toast and the companion were observed together in a live desktop capture: the toast remained legible in the upper-right corner and the companion occupied the lower-left. Panel-open projection retained its protected card/safety rectangle. The local plugin was rescanned through the native shell command; no backend restart, file transfer, radio operation or marketplace update was performed.
 
-## Native QR sending — 0.3.0-alpha.1
+## Historical native QR sending — 0.3.0-alpha.1
 
 The locked workspace suite passed **124 tests** with the consenting physical SDP regression ignored. New regressions cover published HKDF values, fixed-02 key reconstruction, visible/hidden metadata, malformed/duplicate TLVs, wrong keys/tampering, monotonic expiry, owner-safe cancellation, one-time claim, direct routing, UKEY2-bound P1363 proof and preservation of both consent gates.
 
@@ -123,6 +123,7 @@ An independent Python protobuf/cryptography receiver ran across a private veth p
 The actual Panel.qml and Service.qml ran against a real private QR backend. Showing QR without a selected peer, file count, close-during-start, selection-change withdrawal and panel-close withdrawal were exercised. The Spanish panel's rendered QR was decoded with an independent barcode reader; English live labels were inspected. Later capture attempts encountered the host display locked/DPMS off; it was not woken or unlocked.
 
 These are source/runtime and independent-peer interoperability observations, not a claim of a new physical Android QR scan. No host backend was installed or restarted and no marketplace update was requested. Temporary peers and UI/backend processes were removed after observation.
+
 ## Native download-folder selection — 0.2.5
 
 The editable download-path control was removed rather than hidden or made read-only. Runtime inspection of the real Panel.qml and native Omarchy components found no TextInput, TextEdit or TextField descendants with Settings collapsed or expanded. The replacement path label and folder action were rendered in English and Spanish.
@@ -138,6 +139,38 @@ The maintenance helper now distinguishes `LoadState=not-found` from existing loa
 A private HOME/session bus exercised the published ownership, pause and unit-installation helpers. With no user unit present, source-mode registration continued, created owned unit/drop-in and Nautilus registration, enabled its fixture target and started the actual Rust daemon under NoNewPrivileges. Its real v1 status had no transfers or errors. A second pause used the existing-unit path and shut the daemon down cleanly. Only manager/process control and package-mode detection used adapters; this is not a claim of a new host systemd installation or a new source compilation. The prebuilt 0.2.5 daemon was used because the correction is in the shell lifecycle, not the transfer engine.
 
 The user's installed service, preferences, radio/network configuration and received files were not modified by this lifecycle smoke.
+
+## Stable 0.3.0 promotion scope
+
+Stable **0.3.0** brings the native LAN QR invitation flow and lower-left companion into `main`, retaining the bounded-discovery, private native-folder-picker and first-install lifecycle fixes described above. The alpha companion and QR observations remain historical evidence from those builds.
+
+The integrated **0.3.0** workspace built with the locked dependency graph and passed **124 Rust tests**, with the consenting physical SDP regression ignored. All five shell lifecycle regressions, package-script syntax checks and native plugin validation passed.
+
+A fresh independent Python protobuf/cryptography receiver exercised the actual **0.3.0** Rust daemon across a private veth pair in separate user/network namespaces, with a private HOME and session bus and **NoNewPrivileges**. Four completed transfers covered visible-token and hidden AES-GCM-name receivers with both consent orders. Each delivered two files with independently matching SHA-256 hashes and verified the UKEY2-bound P1363 QR signature against the public key reconstructed from the URL. No file payload arrived during the 450 ms observation while the remaining local or remote consent was withheld. Replacement and owner-safe withdrawal passed; selected paths were absent from the QR view and receive visibility stayed off.
+
+These fresh checks establish independent-peer behavior, not a physical Android QR scan. No installed host backend, preferences, received files, radio settings or network configuration were modified.
+
+## Advertisement daemon lifecycle — 0.3.1
+
+The locked workspace built and passed **125 Rust tests**, with the consenting physical SDP regression ignored. The new lifecycle regression checks that loss of the visibility owner terminates a waiting hidden advertiser. All five service-maintenance regressions, package-script syntax checks and native plugin validation passed.
+
+A throwaway executable included the actual production `mdns.rs` and metadata utilities, using the pinned mDNS library and the unchanged 120-second LAN lease constant. In private user/network namespaces, its hidden constructor and running hidden actor owned zero advertisement-daemon threads or UDP sockets. An independent peer resolved the authentic PTR/SRV/TXT/A endpoint before rotation, after rotation and after showing again.
+
+The peer injected **384 unique unsolicited instances / 1,536 records** with 4,500-second TTLs. A fresh native daemon and new UDP socket inodes replaced the first generation at approximately **60.14 seconds**, despite repeated Visible updates. Hiding, visible cancellation and visibility-owner closure in visible/hidden states released the advertisement daemon and sockets. A separate real TCP connection remained open across these transitions and echoed **1,441,792 bytes** with identical independent SHA-256 hashes.
+
+This verifies actual advertisement resources and a separate TCP stream, not a Quick Share protocol transfer or a new physical Android run. Finite resource sampling does not exclude sub-sample thread epilogues; the code waits for shutdown acknowledgment, which the pinned library sends after dropping its cache and sockets. Generation retirement bounds cache retention lifetime, not absolute memory bytes within a generation. No installed host service, network/radio configuration, preferences or received files were changed. Owned processes were reaped.
+
+## Bluetooth discovery retention — 0.3.2
+
+The locked workspace built and passed **131 Rust tests**, with the consenting physical SDP regression ignored. All five service-maintenance regressions, package-script syntax checks and native plugin validation passed. New regressions cover rotating-address eviction and header retirement, shared-route withdrawal, independent radio/peer freshness, protected-state/count admission, malformed signal bounds and same-address Classic protection.
+
+A private executable called the actual production `RQS::with_options`, `run`, `discovery` and `stop` APIs with Bluetooth enabled and LAN/hotspot disabled. A private D-Bus fixture modeled BlueZ 5.87 public/static-random promotion and retained objects; a process-only HCI adapter returned an explicitly empty connection snapshot and rejected all other Bluetooth sockets. **325 recorded-evidence assertions passed** across retention, failure/timeout, cancellation, owner replacement, emerging protection and focused expiry/admission scenarios.
+
+The run delivered **8,192 ServiceData reports** and retained **389 modeled devices** across an application restart. Actual private-bus match rules stayed at **7 baseline**, with at most **8** during a transient confirmation, and zero after shutdown; these are bus-resource observations, not an introspection counter for BlueR's internal registry. Command dispatch continued after the flood, with the first recorded command **6.8 ms** after burst emission completed. Restart over the admission threshold caused zero new Connect calls. In a stable inventory, **127 objects allowed a connection and 128 denied further attempts**, including after restart.
+
+Without DeviceRemoved, duplicate legacy headers remained cached, an unrefreshed peer withdrew at **50.008 seconds** on the expiry cadence, and the identical header was read again at **52.090 seconds**. Paired, bonded-but-unpaired, trusted, blocked and preconnected fixtures received no Connect/Disconnect; preconnected metadata remained readable. Five owned error/timeout connections received five cleanup Disconnects, with timeout cleanup at **9.991 seconds** and no same-header retries. Cancellation released its owned bearer. When bonding emerged during a pending read, cleanup instead preserved the connection, reported the explicit protected-state failure and set availability false. Owner replacement also failed closed at the five-second health check without Connect/Disconnect against the replacement owner.
+
+Two concurrent-injection observations had a census of **127**, followed by a Connect-time count of **128** 57/84 ms later. They complied with the snapshot admission policy, not an atomic global bound; the limitation is retained rather than discarded from the evidence. These are production-engine behavior checks against a modeled BlueZ contract, not native bluetoothd, physical HCI/ATT, Android interoperability or a new file transfer. No installed service, host Bluetooth/network state, preferences or received files were changed.
 
 ## Evidence interpretation
 

@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-quickshare"
-version = "0.3.0-alpha.3"
+version = "0.3.2"
 edition = "2021"
 license = "MIT"
 description = "Quick Share service and Omarchy shell integration"
