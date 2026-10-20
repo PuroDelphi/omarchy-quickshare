@@ -616,7 +616,7 @@ mod tests {
             .try_send(SendInfo {
                 id: "queued".into(),
                 addr: peer.local_addr().unwrap().to_string(),
-                ob: OutboundPayload::Files(vec![source.0.to_str().unwrap().into()]),
+                ob: OutboundPayload::Files(vec![crate::OutboundFile::open(&source.0).unwrap()]),
                 cancellation: cancellation.clone(),
                 qr: None,
             })
@@ -688,14 +688,14 @@ mod tests {
             let original = prefer.then_some(original); // closed selected route in fallback case
             let stop = CancellationToken::new();
             let worker_token = stop.clone();
-            let path = source.0.to_str().unwrap().to_owned();
+            let selected = crate::OutboundFile::open(&source.0).unwrap();
             let worker = tokio::spawn(async move {
                 manager
                     .connect(
                         SendInfo {
                             id: "route".into(),
                             addr: address,
-                            ob: OutboundPayload::Files(vec![path]),
+                            ob: OutboundPayload::Files(vec![selected]),
                             cancellation: CancellationToken::new(),
                             qr: None,
                         },
@@ -743,7 +743,7 @@ mod tests {
             let invitation = Arc::new(QrInvitation::new().unwrap());
             let send = SendInfo {
                 id: "qr-route".into(), addr: address,
-                ob: OutboundPayload::Files(vec![source.0.to_str().unwrap().into()]),
+                ob: OutboundPayload::Files(vec![crate::OutboundFile::open(&source.0).unwrap()]),
                 cancellation: CancellationToken::new(),
                 qr: Some(QrSendContext { invitation, endpoint_id: "PEER".into() }),
             };

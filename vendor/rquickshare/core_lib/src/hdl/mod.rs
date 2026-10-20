@@ -29,9 +29,9 @@ pub enum State {
     Cancelled,
     Finished,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub enum OutboundPayload {
-    Files(Vec<String>),
+    Files(Vec<crate::OutboundFile>),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TextPayloadType {

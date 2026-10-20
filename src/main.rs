@@ -112,29 +112,24 @@ fn read_files(reader: impl Read) -> Result<Vec<String>> {
     Ok(files)
 }
 
-fn canonical_files(files: &[String]) -> Result<Vec<String>> {
-    files
-        .iter()
-        .map(|p| {
-            let path =
-                std::fs::canonicalize(p).with_context(|| format!("Archivo inaccesible: {p}"))?;
-            path.into_os_string()
-                .into_string()
-                .map_err(|_| anyhow::anyhow!("La ruta no puede representarse en D-Bus"))
-        })
-        .collect()
+fn absolute_files(files: Vec<String>) -> Result<Vec<String>> {
+    let mut directory = None;
+    files.into_iter().map(|path| {
+        if std::path::Path::new(&path).is_absolute() {
+            return Ok(path);
+        }
+        if directory.is_none() {
+            directory = Some(std::env::current_dir().context("No se encontró el directorio actual")?);
+        }
+        directory.as_ref().unwrap().join(path).into_os_string().into_string()
+            .map_err(|_| anyhow::anyhow!("La ruta no puede representarse en D-Bus"))
+    }).collect()
 }
 
-async fn share(files: &[String]) -> Result<()> {
-    let paths = canonical_files(files)?;
-    for path in &paths {
-        let metadata =
-            std::fs::metadata(path).with_context(|| format!("Archivo inaccesible: {path}"))?;
-        if !metadata.is_file() {
-            bail!("Solo se pueden enviar archivos normales: {path}");
-        }
-        std::fs::File::open(path).with_context(|| format!("Archivo no legible: {path}"))?;
-    }
+async fn share(files: Vec<String>) -> Result<()> {
+    // This only preloads a selection. The daemon securely opens it when the
+    // user authorizes Send/Show QR; do not resolve symlinks in the handoff.
+    let paths = absolute_files(files)?;
     let connection = zbus::Connection::session().await?;
     let proxy = zbus::Proxy::new(&connection, BUS, PATH, INTERFACE).await?;
     let token: String = proxy.call("PrepareShare", &(paths,)).await?;
@@ -207,7 +202,7 @@ async fn main() -> Result<()> {
         .await;
     }
     match cli.command {
-        Command::Share => share(&read_files(io::stdin().lock())?).await?,
+        Command::Share => share(read_files(io::stdin().lock())?).await?,
         Command::PickFiles { directory } => {
             let selection = ashpd::desktop::file_chooser::SelectedFiles::open_file()
                 .title(if directory {
@@ -284,12 +279,12 @@ async fn main() -> Result<()> {
                     let _: () = proxy.call("SetNetworkConsent", &(value == "on",)).await?;
                 }
                 Command::Send { peer } => {
-                    let paths = canonical_files(&read_files(io::stdin().lock())?)?;
+                    let paths = absolute_files(read_files(io::stdin().lock())?)?;
                     let id: String = proxy.call("Send", &(peer, paths)).await?;
                     println!("{id}");
                 }
                 Command::QrSend => {
-                    let paths = canonical_files(&read_files(io::stdin().lock())?)?;
+                    let paths = absolute_files(read_files(io::stdin().lock())?)?;
                     let invitation: String = proxy.call("StartQrSend", &(paths,)).await?;
                     print_json_line(&invitation)?;
                 }

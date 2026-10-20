@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -224,25 +224,15 @@ impl Session {
         let mut files = BTreeMap::new();
         let mut names = Vec::new();
         let mut total = 0u64;
-        if let Some(OutboundPayload::Files(paths)) = outgoing {
+        if let Some(OutboundPayload::Files(selected)) = outgoing {
             ensure!(
-                !paths.is_empty() && paths.len() <= crate::storage::MAX_FILES,
+                !selected.is_empty() && selected.len() <= crate::storage::MAX_FILES,
                 "invalid file selection"
             );
-            for path in paths {
-                let path = Path::new(&path);
-                ensure!(path.is_absolute(), "send path must be absolute");
-                let file = File::open(path)?;
-                let attr = file.metadata()?;
-                ensure!(attr.is_file(), "send path is not a regular file");
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .ok_or_else(|| anyhow!("send filename must be UTF-8"))?
-                    .to_owned();
-                crate::storage::validate_name(&name)?;
+            for selected in selected {
+                let (file, name, size) = selected.into_parts();
                 total = total
-                    .checked_add(attr.len())
+                    .checked_add(size)
                     .ok_or_else(|| anyhow!("transfer size overflow"))?;
                 ensure!(
                     total <= crate::storage::MAX_TOTAL_BYTES,
@@ -252,7 +242,7 @@ impl Session {
                 while files.contains_key(&id) {
                     id = rand::rng().random();
                 }
-                let mime = mime_guess::from_path(path)
+                let mime = mime_guess::from_path(&name)
                     .first_or_octet_stream()
                     .to_string();
                 let kind = if mime.starts_with("image/") {
@@ -267,7 +257,7 @@ impl Session {
                 let metadata = q::FileMetadata {
                     name: Some(name.clone()),
                     payload_id: Some(id),
-                    size: Some(attr.len() as i64),
+                    size: Some(size as i64),
                     mime_type: Some(mime),
                     r#type: Some(kind.into()),
                     ..Default::default()
@@ -2404,6 +2394,9 @@ mod tests {
         (client, server.server_finish(&finish).unwrap())
     }
     fn session() -> (Session, FramedStream) {
+        session_with_outgoing(None)
+    }
+    fn session_with_outgoing(outgoing: Option<OutboundPayload>) -> (Session, FramedStream) {
         let (local, remote) = tokio::io::duplex(128 * 1024);
         let (sender, _) = broadcast::channel(32);
         let session = Session::new(
@@ -2417,12 +2410,115 @@ mod tests {
             true,
             false,
             Arc::new(AtomicBool::new(false)),
-            None,
+            outgoing,
             Some("PEER".into()),
             None,
         )
         .unwrap();
         (session, FramedStream::new(Box::new(remote)))
+    }
+    struct Directory(PathBuf);
+    impl Directory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "quickshare-pinned-session-{}", uuid::Uuid::new_v4()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn sending(selected: crate::OutboundFile) -> (Session, FramedStream, Crypto) {
+        let (mut session, socket) =
+            session_with_outgoing(Some(OutboundPayload::Files(vec![selected])));
+        let (crypto, peer) = pair();
+        session.crypto = Some(crypto);
+        session.enter(Phase::Transfer);
+        session.locally_verified = true;
+        session.remote_accepted = true;
+        (session, socket, peer)
+    }
+    async fn read_file_packet(socket: &mut FramedStream, peer: &mut Crypto) -> n::PayloadTransferFrame {
+        let wire = socket.read_frame().await.unwrap();
+        let plaintext = peer.open(&wire).unwrap();
+        n::OfflineFrame::decode(plaintext.as_slice())
+            .unwrap().v1.unwrap().payload_transfer.unwrap()
+    }
+
+    #[tokio::test]
+    async fn queued_selection_delivers_original_inode_after_private_symlink_swap() {
+        let directory = Directory::new();
+        let parent = directory.0.join("selected");
+        std::fs::create_dir(&parent).unwrap();
+        let path = parent.join("public.txt");
+        let original = b"Selected public content, not the sender's private content";
+        std::fs::write(&path, original).unwrap();
+        // Selection happens before connection/session construction.
+        let selected = crate::OutboundFile::open(&path).unwrap();
+        let moved = directory.0.join("moved");
+        std::fs::rename(&parent, &moved).unwrap();
+        std::fs::remove_file(moved.join("public.txt")).unwrap();
+        let private = directory.0.join("private");
+        std::fs::create_dir(&private).unwrap();
+        std::fs::write(private.join("public.txt"), b"PRIVATE SECRET").unwrap();
+        std::os::unix::fs::symlink(&private, &parent).unwrap();
+        let (mut session, mut socket, mut peer) = sending(selected);
+        assert_eq!(session.metadata.total_bytes, original.len() as u64);
+        assert_eq!(session.metadata.files.as_ref().unwrap(), &["public.txt"]);
+        session.send_next().await.unwrap();
+        let packet = read_file_packet(&mut socket, &mut peer).await;
+        let header = packet.payload_header.unwrap();
+        assert_eq!(header.total_size(), original.len() as i64);
+        assert_eq!(header.file_name(), "public.txt");
+        assert_eq!(packet.payload_chunk.unwrap().body(), original);
+        session.send_next().await.unwrap();
+        let packet = read_file_packet(&mut socket, &mut peer).await;
+        let chunk = packet.payload_chunk.unwrap();
+        assert!(chunk.body().is_empty());
+        assert_eq!(chunk.offset(), original.len() as i64);
+        assert!(session.files.values().all(|file| file.last_sent));
+    }
+
+    #[tokio::test]
+    async fn selected_size_limits_data_after_in_place_growth() {
+        let directory = Directory::new();
+        let path = directory.0.join("public.txt");
+        let original = b"selected";
+        std::fs::write(&path, original).unwrap();
+        let selected = crate::OutboundFile::open(&path).unwrap();
+        use std::io::Write;
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap()
+            .write_all(b" later bytes must not exceed declared size").unwrap();
+        let (mut session, mut socket, mut peer) = sending(selected);
+        session.send_next().await.unwrap();
+        let packet = read_file_packet(&mut socket, &mut peer).await;
+        assert_eq!(packet.payload_header.unwrap().total_size(), original.len() as i64);
+        assert_eq!(packet.payload_chunk.unwrap().body(), original);
+        session.send_next().await.unwrap();
+        assert!(read_file_packet(&mut socket, &mut peer).await
+            .payload_chunk.unwrap().body().is_empty());
+        assert_eq!(session.metadata.ack_bytes, original.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn selected_file_truncation_fails_instead_of_sending_short_data() {
+        let directory = Directory::new();
+        let path = directory.0.join("public.txt");
+        std::fs::write(&path, b"original selected bytes").unwrap();
+        let selected = crate::OutboundFile::open(&path).unwrap();
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(1).unwrap();
+        let (mut session, mut socket, _peer) = sending(selected);
+        let error = session.send_next().await.unwrap_err();
+        assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(session.metadata.ack_bytes, 0);
+        assert!(session.files.values().all(|file| file.offset == 0 && !file.last_sent));
+        assert!(tokio::time::timeout(Duration::from_millis(10), socket.read_frame())
+            .await.is_err());
     }
     fn accepted() -> q::Frame {
         sharing(q::V1Frame {
@@ -3431,45 +3527,16 @@ mod tests {
     }
     #[tokio::test]
     async fn tentative_lan_blocks_file_data_despite_both_consents() {
-        struct Directory(PathBuf);
-        impl Drop for Directory {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let directory = Directory(std::env::temp_dir().join(format!(
-            "quickshare-lan-proof-test-{}",
-            uuid::Uuid::new_v4()
-        )));
-        std::fs::create_dir(&directory.0).unwrap();
+        let directory = Directory::new();
         let path = directory.0.join("payload.bin");
         let body = b"File bytes require the replacement channel's key proof";
         std::fs::write(&path, body).unwrap();
-        let (mut session, mut socket) = session();
-        let (crypto, mut peer) = pair();
-        session.crypto = Some(crypto);
-        session.files.insert(
-            42,
-            SendingFile {
-                metadata: q::FileMetadata {
-                    name: Some("payload.bin".into()),
-                    payload_id: Some(42),
-                    size: Some(body.len() as i64),
-                    ..Default::default()
-                },
-                file: File::open(path).unwrap(),
-                offset: 0,
-                last_sent: false,
-                acknowledged: false,
-            },
-        );
-        session.outbound = true;
-        session.enter(Phase::Transfer);
-        session.locally_verified = true;
-        session.remote_accepted = true;
+        let selected = crate::OutboundFile::open(&path).unwrap();
+        let (mut session, mut socket, mut peer) = sending(selected);
+        let id = *session.files.keys().next().unwrap();
         session.pending_lan = true;
         assert!(session.send_next().await.is_err());
-        assert_eq!(session.files[&42].offset, 0);
+        assert_eq!(session.files[&id].offset, 0);
         assert_eq!(session.transport, "bluetooth");
         let proof = peer
             .seal(
@@ -3492,7 +3559,7 @@ mod tests {
             .payload_transfer
             .unwrap();
         assert_eq!(packet.payload_chunk.unwrap().body(), body);
-        assert_eq!(session.files[&42].offset, body.len() as i64);
+        assert_eq!(session.files[&id].offset, body.len() as i64);
         assert_eq!(session.transport, "lan");
     }
     #[tokio::test]

@@ -54,6 +54,8 @@ Received files go to your configured download folder. Change it with **Settings 
 
 Opening the panel never sends a file automatically. Closing it does not stop an active transfer; use **Cancel** when you want to stop.
 
+Choose regular local files through their real folder paths. Symbolic links, including linked parent folders, are rejected; select the actual target instead.
+
 In **stable 0.3.0**, you can also select files and choose **Show QR**. Scan it with Android Quick Share on the same local network, then compare and confirm the verification code when requested. Update both the plugin and backend for this feature; see the [QR instructions](docs/USER_GUIDE.md#send-with-an-android-quick-share-qr-code).
 
 ## Update or remove

@@ -182,6 +182,16 @@ Stable security fixes were merged into alpha before PR integration. Promotion al
 
 The integrated **0.3.3** locked workspace built and passed **131 Rust tests**, with one consenting physical SDP regression ignored. All five service-maintenance regressions, package/builder syntax checks and native plugin validation passed. No new physical phone transfer is claimed for this presentation/funding update.
 
+## Pinned outgoing-file ownership — 0.3.4
+
+The integrated workspace built and passed **139 Rust tests**, with one consenting physical SDP regression ignored, plus all five service-maintenance regressions and package/builder syntax checks. Security regressions cover final/ancestor symlink rejection, original-inode reads after rename/unlink/replacement, special-file/FIFO rejection, partial-preparation descriptor retirement, captured-size growth/truncation behavior and aggregate QR selection boundaries without replacing a valid pending offer.
+
+The actual new CLI/daemon and a public-RQS receiver ran as UID 1000 with **NoNewPrivileges**, private HOME/D-Bus/user namespaces and two separate private network namespaces joined by veth. Genuine mDNS discovery found the receiver; a process-only connect interposer held the sender's TCP setup after file preparation/queueing. While the sender still reported Connecting, the controller replaced selected leaf paths and a parent directory with symlinks to private mode-0600 fixture files. The compared PINs matched, no file was created before consent, both real consent gates were exercised and both sessions completed.
+
+The receiver committed **three files / 196,892 bytes**, including a multi-chunk binary and an empty file, matching the original selections byte-for-byte and by independent SHA-256 rather than either private substitute. The three selected descriptors remained owned during the held connection and retired after completion. Initial CLI symlinks were rejected; replacing a pending QR retired its old descriptor, stopping an old invitation preserved the new one, and stopping the current invitation released its descriptor. Both owned processes exited cleanly with no engine errors.
+
+This is an actual encrypted production-engine transfer over private kernel TCP/filesystems, not a native Android transfer or a separate-UID attacker execution. The path-mutating controller was a separate process with the same test UID; different-UID filesystem substitution is the reported threat model, not newly reproduced here. NetworkManager capability/inventory reads were explicitly adapted, and the connect gate was only a private scheduling fixture. No installed host service/plugin, user files, physical radios or host network configuration were changed. In-place content mutation by existing writers is not prevented by inode pinning.
+
 ## Evidence interpretation
 
 Successful transfer means engine completion plus the stated integrity method. A valid media container, a round trip, a capability label or 0/0 bytes alone is not independent destination integrity.

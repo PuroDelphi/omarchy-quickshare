@@ -12,6 +12,7 @@ The standalone bar icon follows Omarchy's contrast-aware foreground, including t
 
 - Complete **Install service** from the panel and wait for **Ready**.
 - Keep Bluetooth enabled for Bluetooth discovery and transfers. A compatible shared local network provides the LAN file route.
+- Select regular local files through their real folder paths. Symbolic links, including links in parent folders, are rejected; choose the actual target directly.
 - Unlock the phone so you can handle its Quick Share prompt.
 - The **receiving** device must be visible. The **sending** device chooses files and a destination.
 
@@ -54,6 +55,8 @@ Visibility is temporary. Its expiry stops new discovery offers, not an already e
 *The selected device is highlighted. Review both the destination and the file list before using Send; choosing files alone does not start a transfer.*
 
 A manually selected destination that disappears is cleared, not replaced with another device. A preloaded file selection never starts sending by itself.
+
+Since backend **0.3.4**, Send and Show QR retain the opened files throughout connection setup or pending QR discovery. Renaming, unlinking or replacing a selected path cannot redirect the transfer to another file. This pins the file's identity, not an immutable copy of its contents: keep files unchanged until sending finishes. A growing file is limited to its captured size; a file truncated before all captured bytes can be read fails instead of completing a shortened transfer. Update both the plugin and backend for this security fix.
 
 ### Send with an Android Quick Share QR code
 
