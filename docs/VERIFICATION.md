@@ -192,6 +192,23 @@ The receiver committed **three files / 196,892 bytes**, including a multi-chunk 
 
 This is an actual encrypted production-engine transfer over private kernel TCP/filesystems, not a native Android transfer or a separate-UID attacker execution. The path-mutating controller was a separate process with the same test UID; different-UID filesystem substitution is the reported threat model, not newly reproduced here. NetworkManager capability/inventory reads were explicitly adapted, and the connect gate was only a private scheduling fixture. No installed host service/plugin, user files, physical radios or host network configuration were changed. In-place content mutation by existing writers is not prevented by inode pinning.
 
+## Intrinsic mDNS retention boundary — 0.3.5
+
+The original pinned dependency was exercised through real multicast UDP in two private network namespaces, without attempting system OOM. With unrelated, unexpired 8 KiB TXT records, observed RSS grew across both waves. Its undrained browse receiver also prevented daemon shutdown, which timed out after two seconds.
+
+| Dependency actor | Initial RSS KiB | After 400 TXT records | After 800 TXT records |
+| --- | ---: | ---: | ---: |
+| Original pinned fork | 3,080 | 6,428 | 9,756 |
+| Bounded local fork | 3,056 | 4,108 | 4,108 |
+
+RSS is an observation, not exact allocation instrumentation. In the bounded run, fixed gauges remained at **125 records / 1,046,250 charged bytes** across both TXT waves; a separate short-record flood admitted **4,096 records / 458,808 charged bytes** from 12,000 distinct offered addresses, independently reaching the record ceiling. Existing-record TTL renewal still worked at capacity. Advertisement-only daemons passed the same independent count/byte pressure.
+
+Nine actual-socket scenarios covered count and byte pressure, PTR/subtype floods and four goodbye/readd cycles, malformed packet/name/count rejection, advertisement-only pressure, unread browse/monitor receivers and continuous UDP. Derived-state gauges stayed bounded; retired cycles left no cached records or pending resolution jobs. Normal service resolution recovered after pressure, goodbye and expiry; visible QR-format TXT metadata passed through unchanged. This metadata carriage does not establish invitation-key authentication. All bounded actors shut down successfully, including while packets continued arriving and while event receivers remained unread.
+
+The actual **0.3.5 CLI/daemon** also ran with private HOME/session/system D-Bus and two private network namespaces as UID 1000 with NoNewPrivileges. While visible, it received 1,200 distinct unrelated 8 KiB TXT records in three waves without restarting and remained responsive throughout. After goodbyes, the unchanged daemon discovered the expected named peer through real mDNS and TCP reachability probing, hid, and created/withdrew a real pending QR. Final errors were empty, no transfer or received file was created and exit was 0. NetworkManager reads used a restricted read-only inventory adapter; no native Android, NetworkManager/radio reconfiguration or new file transfer is claimed.
+
+The integrated locked workspace passed **166 Rust tests**, with four ignored cases (physical SDP, native multicast and two no-run documentation examples), all five service-maintenance regressions, builder/package syntax and native Omarchy manifest validation. Registry dependency versions were preserved; only the mDNS source changed to the locally reviewed/modified copy and the application version changed. Original license texts, fork revision and modification notice are included. No installed host plugin/service, user files, host network settings or radios were modified.
+
 ## Evidence interpretation
 
 Successful transfer means engine completion plus the stated integrity method. A valid media container, a round trip, a capability label or 0/0 bytes alone is not independent destination integrity.

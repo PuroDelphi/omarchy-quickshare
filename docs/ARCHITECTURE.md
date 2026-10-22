@@ -64,11 +64,28 @@ Since backend **0.2.4**, the application discovery cache, aggregate peer/routing
 
 LAN observations have a **120-second monotonic lease**. Source and aggregate timers expire them even while receive visibility is off; snapshot reads and Send also prune expired devices. Lease-only refreshes do not churn the serialized model. Bluetooth uses the discovery-owned lease described below because unchanged Bluetooth observations are not emitted as aggregate refresh events. Dropped discovery events invalidate the affected cache/model instead of retaining an unknowable partial list.
 
-The pinned mDNS dependency silently renews unchanged DNS records without sending a new resolution event. The owned discovery browser therefore starts a fresh daemon/browse every **60 seconds**, retaining only the bounded application cache and renewing leases only from fresh validated responses and reachable TCP endpoints. Old-generation events are drained and discarded; advertisement, Bluetooth, active file sockets, PIN consent and network configuration are untouched.
+### mDNS resource boundary
 
-Since backend **0.3.1**, the separate mDNS advertisement daemon is created only while receive visibility is on; constructing the advertiser creates no daemon, and an invisible advertiser owns no multicast listener or retained DNS cache. A visible daemon generation is retired every **60 seconds** (half the LAN peer lease), even if repeated Visible updates arrive. Retirement unregisters the service and shuts down the daemon, awaiting shutdown acknowledgment before creating a replacement. Hiding, cancellation, visibility-channel closure and errors also retire the generation; shutdown is still attempted if setup or unregister fails, and failures remain explicit. No discarded-event monitor subscription is retained.
+Since backend **0.3.5**, `mdns-sd` is a locally vendored security fork of revision `c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7`; [provenance and modification notice](../vendor/mdns-sd/NOTICE) and original MIT/Apache license texts ship with source and package. Every daemon, including advertisement-only instances, enforces admission before retaining raw DNS records, even for unrelated names.
 
-This bounds the advertisement daemon's cache retention lifetime, not its absolute memory use or the number of DNS records a flood can deliver within one generation. Advertisement and discovery-browser generations are separate lifecycles. Their rotation does not replace the shared TCP listener, interrupt active data sockets, change endpoint IDs or LAN priority, or alter QR discovery and consent.
+| Resource | Ceiling |
+| --- | --- |
+| Raw DNS cache | 4,096 records per daemon |
+| Charged cache storage | 1 MiB per daemon |
+| Pending resolutions | 4,096 per daemon |
+| Retransmission jobs | 4,096 per daemon |
+| Datagram | 8,972 bytes |
+| Questions plus resource records | 256 per datagram |
+| Expanded DNS name | 255 wire octets |
+| Socket work | 32 datagrams per turn before control/expiry work |
+
+The byte charge includes concrete record storage, owned string/vector capacities, duplicate map keys and record-vector slots. Retained vector slack stays charged and shrinks geometrically; empty keys disappear on goodbye/expiry. Map-bucket/allocator overhead and the rest of the process are not an exact 1 MiB RSS ceiling: record/key counts and bounded fields additionally bound that overhead. Excess new records are dropped; existing-record TTL renewal remains possible at capacity. Discovery under pressure is best effort, not a guarantee of availability against a LAN attacker.
+
+Subtype lookup and timer deadlines derive from live bounded records; no independent subtype map or append-only packet-timer list survives churn. Pending resolutions and retries retire on goodbye, expiry, successful resolution, exhausted retries and stopped browsing. Parsing checks widened entry/TTL arithmetic, compressed-name traversal and RDATA boundaries before constructing retained state. Browse/monitor channels remain bounded and spontaneous delivery is nonblocking; bounded socket work allows commands, expiry and shutdown to progress during continuous traffic. Existing `get_metrics` exposes fixed-label cache/work gauges, not per-name labels or a telemetry service.
+
+Unchanged answers still renew DNS TTL without emitting a resolution event. The discovery browser re-browses every **60 seconds** only to obtain fresh observations for the application's monotonic lease; its refresh is **not** the raw-DNS memory boundary. Old-generation events are drained/discarded.
+
+An invisible advertisement actor owns no multicast listener. Since **0.3.5**, a visible advertiser uses the bounded dependency and stays alive until hiding, cancellation, visibility-channel closure or error, without the older 60-second advertisement recycle. It unregisters and awaits shutdown on retirement, including setup/unregister failure paths. Shared TCP listener, active file sockets, endpoint IDs, LAN priority, QR authentication and PIN/consent remain independent of these discovery lifecycles.
 
 Since backend **0.3.2**, Bluetooth discovery shares one **128-address / 45-second monotonic lease** across address observations, legacy-header results and peers. Expiry, oldest-record eviction, removal and shutdown retire the associated metadata and withdraw routes together. Only radio observations renew freshness; Connected, Paired, Bonded and Trusted changes do not. A bounded **128-message**, unique-BlueZ-owner signal stream replaces persistent per-address BlueR event streams. GATT enumeration uses directly owned, short-lived streams rather than `device.services()`, whose service-resolution helper also creates a retained BlueR subscription. Signal connections are separate from the command connection so their backpressure cannot prevent Connect, property-read or Disconnect replies.
 

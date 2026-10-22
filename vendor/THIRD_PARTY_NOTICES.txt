@@ -985,6 +985,9 @@ mdns-sd 0.10.4
 Declared license: Apache-2.0 OR MIT
 Authors declared in Cargo.toml: keepsimple <keepsimple@gmail.com>
 Source: git+https://github.com/Martichou/mdns-sd?rev=c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7#c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7
+Local security modifications since Omarchy Quick Share 0.3.5: vendored in vendor/mdns-sd.
+The original revision above is the provenance, not a fetchable unmodified runtime dependency.
+Modification notice: vendor/mdns-sd/NOTICE. Original dual-license texts are preserved.
 Notice file: LICENSE-APACHE — text SHA-256 1118360170ac75117538c65db992cfec5d0ffa28a6b990e46ab45602b638c8fd
 Notice file: LICENSE-MIT — text SHA-256 cf0547f95d22b91b11540bc053d4973ad8beed39f98b614254c074ca4ed6b6af
 

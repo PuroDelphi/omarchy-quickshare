@@ -23,7 +23,7 @@ hkdf = "0.12"
 hmac = "0.12"
 libaes = "0.7"
 log = "0.4"
-mdns-sd = { git = "https://github.com/Martichou/mdns-sd", rev = "c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7" }
+mdns-sd = { path = "../../mdns-sd" }
 mime_guess = "2.0"
 p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 parking_lot = "0.12"

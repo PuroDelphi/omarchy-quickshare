@@ -1119,7 +1119,6 @@ dependencies = [
 [[package]]
 name = "mdns-sd"
 version = "0.10.4"
-source = "git+https://github.com/Martichou/mdns-sd?rev=c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7#c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7"
 dependencies = [
  "flume",
  "if-addrs",
@@ -1219,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-quickshare"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "ashpd",

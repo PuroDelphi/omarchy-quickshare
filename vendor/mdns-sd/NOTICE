@@ -1,0 +1,22 @@
+Omarchy Quick Share includes a modified mdns-sd 0.10.4.
+
+Original project: mdns-sd by keepsimple and contributors.
+Upstream: https://github.com/keepsimple1/mdns-sd
+Compatibility fork: https://github.com/Martichou/mdns-sd
+Imported revision: c3d6ec2e173ac2cf8306943f70026c37c2ab1dd7
+Original license: Apache-2.0 OR MIT; both original license texts are preserved.
+
+Local security modifications for Omarchy Quick Share 0.3.5, 2026-10-21:
+- Bound DNS datagram/entry/name decoding and RDATA/compression traversal.
+- Admit raw cached records only within record and charged-storage ceilings.
+- Account retained payload/key/vector capacities; retire empty keys on removal.
+- Derive subtypes and timer deadlines from live bounded records rather than
+  retaining independent subtype mappings or append-only packet timers.
+- Bound and retire pending resolution/retransmission work.
+- Bound per-turn socket work and use nonblocking event/monitor delivery so
+  pressure cannot prevent control/expiry/shutdown progress.
+- Add fixed-label retention gauges and deterministic behavioral regressions.
+
+Modified files: Cargo.toml, src/dns_parser.rs, src/service_daemon.rs, src/lib.rs.
+src/service_info.rs and src/error.rs retain the imported implementations.
+The storage charge is not an exact process RSS or allocator-overhead ceiling.

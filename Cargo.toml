@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-quickshare"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 license = "MIT"
 description = "Quick Share service and Omarchy shell integration"
@@ -8,7 +8,7 @@ authors = ["Jhonny Suarez - PuroDelphi"]
 repository = "https://github.com/PuroDelphi/omarchy-quickshare"
 
 [workspace]
-members = ["vendor/rquickshare/core_lib"]
+members = ["vendor/rquickshare/core_lib", "vendor/mdns-sd"]
 resolver = "2"
 
 [dependencies]

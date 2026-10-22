@@ -55,10 +55,10 @@ impl MDnsDiscovery {
             let mut expiry = tokio::time::interval(Duration::from_secs(1));
             expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            // The pinned mdns-sd suppresses ServiceResolved for unchanged
-            // answers even when it renews their DNS TTL. Start a fresh browse
-            // before our lease expires, rather than renewing from its stale
-            // cached snapshot. This also retires the daemon's old DNS cache.
+            // Unchanged answers renew DNS TTL without a ServiceResolved event.
+            // Re-browse before the application lease expires to obtain fresh
+            // observations. Intrinsic dependency budgets bound raw DNS/state
+            // allocations throughout each period; this refresh is not that bound.
             let refresh_period = LAN_PEER_TTL / 2;
             let mut refresh = tokio::time::interval_at(
                 tokio::time::Instant::now() + refresh_period,

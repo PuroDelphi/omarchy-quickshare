@@ -6,8 +6,6 @@ use mdns_sd::{AddrType, ServiceDaemon, ServiceInfo};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::peer_cache::LAN_PEER_TTL;
-
 use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
 
 const INNER_NAME: &str = "MDnsServer";
@@ -42,8 +40,8 @@ impl MDnsServer {
     pub async fn run(&mut self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         info!("{INNER_NAME}: service starting");
         while !ctk.is_cancelled() && self.visibility_receiver.has_changed().is_ok() {
-            // Hidden receive mode must not retain an advertisement listener or
-            // the pinned mdns-sd's otherwise persistent DNS-name cache.
+            // Hidden receive mode owns no multicast listener. Visible listeners
+            // use the dependency's intrinsic DNS/state budgets, not a lifetime cap.
             if *self.visibility_receiver.borrow_and_update() == Visibility::Invisible {
                 tokio::select! {
                     _ = ctk.cancelled() => break,
@@ -57,14 +55,9 @@ impl MDnsServer {
             let daemon = ServiceDaemon::new()?;
             let result: Result<(), anyhow::Error> = async {
                 daemon.register(self.service_info.clone())?;
-                // Match the browser's cache retirement period. Repeated Visible
-                // notifications must not extend this generation's lifetime.
-                let lifetime = tokio::time::sleep(LAN_PEER_TTL / 2);
-                tokio::pin!(lifetime);
                 loop {
                     tokio::select! {
                         _ = ctk.cancelled() => break,
-                        _ = &mut lifetime => break,
                         changed = self.visibility_receiver.changed() => {
                             if changed.is_err()
                                 || *self.visibility_receiver.borrow_and_update() == Visibility::Invisible {
@@ -76,7 +69,7 @@ impl MDnsServer {
                 Ok(())
             }.await;
 
-            // Retire this generation on every exit, including setup errors.
+            // Retire this visible period on every exit, including setup errors.
             // No monitor is subscribed: its discarded events previously added
             // a bounded channel that could obstruct daemon shutdown.
             let unregister: Result<(), anyhow::Error> = async {

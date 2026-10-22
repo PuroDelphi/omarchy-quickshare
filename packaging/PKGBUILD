@@ -1,6 +1,6 @@
 # Build with scripts/build-package.sh from a source checkout.
 pkgname=omarchy-quickshare
-pkgver=0.3.4
+pkgver=0.3.5
 pkgrel=1
 pkgdesc='Quick Share Rust backend for the native Omarchy plugin'
 url='https://github.com/PuroDelphi/omarchy-quickshare'
@@ -38,6 +38,9 @@ package() {
   install -Dm644 vendor/rquickshare/LICENSE-CHROMIUM "$pkgdir/usr/share/licenses/$pkgname/LICENSE-CHROMIUM"
   install -Dm644 vendor/rquickshare/NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
   install -Dm644 vendor/THIRD_PARTY_NOTICES.txt "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.txt"
+  install -Dm644 vendor/mdns-sd/LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MDNS-MIT"
+  install -Dm644 vendor/mdns-sd/LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MDNS-APACHE"
+  install -Dm644 vendor/mdns-sd/NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE-MDNS"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 preview.png "$pkgdir/usr/share/doc/$pkgname/preview.png"
   install -Dm644 "$startdir/$pkgname-$pkgver.tar.gz" "$pkgdir/usr/share/doc/$pkgname/source/source.tar.gz"

@@ -13,6 +13,9 @@ Modified for Omarchy Quick Share on 2026-10-09:
   publication, cancellation and transport/error events.
 - Removed the obsolete TypeScript export layer and standalone core binary.
 - Pinned mdns-sd to the exact Cargo.lock revision for reproducible builds.
+- Since 0.3.5, use the locally vendored mdns-sd security fork based on that
+  revision, with intrinsic DNS parser/cache and derived-state budgets.
+  Its provenance and modification notice are in ../mdns-sd/NOTICE.
 
 The Google-origin protobuf schemas preserve their Apache-2.0 headers.
 The modified offline_wire_formats.proto carries a change notice; the full
