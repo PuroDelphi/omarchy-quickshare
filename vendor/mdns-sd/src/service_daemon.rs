@@ -1385,8 +1385,8 @@ impl Zeroconf {
 
     /// Reads from the socket of `ip`.
     ///
-    /// Returns false if failed to receive a packet,
-    /// otherwise returns true.
+    /// Returns true when a datagram was consumed, even if it is invalid,
+    /// and false when no datagram could be received.
     fn handle_read(&mut self, ip: &IpAddr) -> bool {
         let intf_sock = match self.intf_socks.get_mut(ip) {
             Some(if_sock) => if_sock,
@@ -1405,30 +1405,13 @@ impl Zeroconf {
                 return false;
             }
         };
-        if sz > MAX_MSG_ABSOLUTE {
+        // UDP has no stream EOF: zero bytes is a consumed, invalid datagram.
+        // Keep the socket and its poll registration; the caller rearms it.
+        if sz == 0 || sz > MAX_MSG_ABSOLUTE {
             return true;
         }
 
         debug!("received {} bytes", sz);
-
-        // If sz is 0, it means sock reached End-of-File.
-        if sz == 0 {
-            error!("socket {:?} was likely shutdown", intf_sock);
-            if let Err(e) = self.poller.delete(&intf_sock.sock) {
-                error!("failed to remove sock {:?} from poller: {}", intf_sock, &e);
-            }
-
-            // Replace the closed socket with a new one.
-            match new_socket_bind(&intf_sock.intf) {
-                Ok(sock) => {
-                    let intf = intf_sock.intf.clone();
-                    self.intf_socks.insert(*ip, IntfSock { intf, sock });
-                    debug!("reset socket for IP {}", ip);
-                }
-                Err(e) => error!("re-bind a socket to {}: {}", ip, e),
-            }
-            return false;
-        }
 
         buf.truncate(sz); // reduce potential processing errors
 
@@ -2612,6 +2595,83 @@ mod tests {
 #[cfg(test)]
 mod bounded_tests {
     use super::*;
+
+    #[test]
+    fn empty_udp_datagrams_preserve_polling_and_later_dns_responses() {
+        // Ephemeral loopback sockets: no multicast, host interfaces or daemon thread.
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let receiver = UdpSocket::bind((ip, 0)).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+        let destination = receiver.local_addr().unwrap();
+        let sender = UdpSocket::bind((ip, 0)).unwrap();
+        let intf = Interface {
+            name: "loopback-test".to_owned(),
+            addr: if_addrs::IfAddr::V4(if_addrs::Ifv4Addr {
+                ip: Ipv4Addr::LOCALHOST,
+                netmask: Ipv4Addr::new(255, 0, 0, 0),
+                broadcast: None,
+            }),
+            index: None,
+        };
+        let mut zc = Zeroconf {
+            intf_socks: std::iter::once((ip, IntfSock {
+                intf,
+                sock: receiver.into(),
+            })).collect(),
+            poll_ids: HashMap::new(),
+            poll_id_count: 0,
+            my_services: HashMap::new(),
+            cache: DnsCache::new(),
+            queriers: HashMap::new(),
+            retransmissions: Vec::new(),
+            counters: HashMap::new(),
+            poller: Poller::new().unwrap(),
+            monitors: Vec::new(),
+            service_name_len_max: SERVICE_NAME_LEN_MAX_DEFAULT,
+            if_selections: Vec::new(),
+            signal_sock: UdpSocket::bind((ip, 0)).unwrap(),
+            status: DaemonStatus::Running,
+            pending_resolves: HashSet::new(),
+        };
+        let key = Zeroconf::add_poll_impl(&mut zc.poll_ids, &mut zc.poll_id_count, ip);
+        zc.poller.add(&zc.intf_socks[&ip].sock, polling::Event::readable(key)).unwrap();
+
+        // Cross the per-turn quota, then repeat after a successful DNS response.
+        for (round, empty_count) in [MAX_PACKETS_PER_TURN + 1, 1].iter().copied().enumerate() {
+            for _ in 0..empty_count {
+                sender.send_to(&[], destination).unwrap();
+            }
+            let name = format!("after-empty-{round}.local.");
+            let mut response = DnsOutgoing::new(FLAGS_QR_RESPONSE | FLAGS_AA);
+            response.add_additional_answer(address(&name, 1, 120));
+            sender.send_to(&response.to_packet_data(), destination).unwrap();
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !zc.cache.addr.contains_key(&name) {
+                let mut events = Vec::new();
+                let remaining = deadline.checked_duration_since(std::time::Instant::now())
+                    .expect("DNS reception stopped after an empty UDP datagram");
+                zc.poller.wait(&mut events, Some(remaining)).unwrap();
+                assert!(!events.is_empty(), "later DNS response was not received");
+                for event in events {
+                    assert_eq!(event.key, key);
+                    for _ in 0..MAX_PACKETS_PER_TURN {
+                        if !zc.handle_read(&ip) {
+                            break;
+                        }
+                    }
+                    zc.poller.modify(&zc.intf_socks[&ip].sock,
+                        polling::Event::readable(key))
+                        .expect("empty UDP must not remove the socket's poll registration");
+                }
+            }
+            let expected = address(&name, 1, 120);
+            assert!(zc.cache.addr[&name].iter().any(|record| record.matches(expected.as_ref())));
+            assert_eq!(zc.cache.records, round + 1);
+            assert_accounting(&zc.cache);
+        }
+        assert!(!zc.handle_read(&ip), "WouldBlock must still end this turn");
+    }
 
     fn address(name: &str, last: u8, ttl: u32) -> DnsRecordBox {
         Box::new(DnsAddress::new(name, TYPE_A, CLASS_IN, ttl,

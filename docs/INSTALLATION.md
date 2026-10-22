@@ -171,6 +171,8 @@ Stable **0.3.5** on `main`, the channel used for the marketplace submission, fix
 
 The plugin checks optional backend capabilities rather than assuming a QML checkout replaced the daemon. Check the panel's service information for the installed backend version. Stable application/source version and Arch `pkgver` are all **0.3.5**; there is no prerelease `_sourcever` distinction. Apply the explicit backend update even when a newer panel already displays 0.3.5.
 
+**Post-0.3.5 source correction:** `main` also fixes empty UDP datagrams disabling mDNS reception; see the [recorded regression and real-socket smoke](VERIFICATION.md#empty-udp-datagrams-and-mdns-reception--post-035-correction). The original v0.3.5 release assets predate this fix. The version string alone does not identify it: the backend must be rebuilt from the fixing commit or later. With that native plugin checkout selected, **Update service** builds its current source in both user-executable and system-package modes; it does not download the old release executable. Finish/cancel transfers and authorize the terminal's requested changes as usual.
+
 ## Returning an existing alpha checkout to main
 
 Stable **0.3.0** promotes the QR flow and lower-left companion as well as the prior fixes. An existing native installation checked out on `alpha` can return to `main` through the same native plugin lifecycle. Preserve local modifications by committing them or making a separate backup before switching:
