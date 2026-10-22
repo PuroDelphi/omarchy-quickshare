@@ -209,7 +209,7 @@ The actual **0.3.5 CLI/daemon** also ran with private HOME/session/system D-Bus 
 
 The integrated locked workspace passed **166 Rust tests**, with four ignored cases (physical SDP, native multicast and two no-run documentation examples), all five service-maintenance regressions, builder/package syntax and native Omarchy manifest validation. Registry dependency versions were preserved; only the mDNS source changed to the locally reviewed/modified copy and the application version changed. Original license texts, fork revision and modification notice are included. No installed host plugin/service, user files, host network settings or radios were modified.
 
-## Empty UDP datagrams and mDNS reception — post-0.3.5 correction
+## Empty UDP datagrams and mDNS reception — 0.3.6
 
 The new deterministic regression reproduced the original failure using real, nonblocking ephemeral-loopback UDP sockets and the production receive/cache code: after an empty datagram, rearming the poller failed with `ENOENT`. With the correction, the same regression passed. It queues 33 empty datagrams (crossing the 32-packet turn quota), verifies the following DNS address record, repeats an empty-datagram/response cycle, checks cache accounting and verifies that an empty receive queue still ends the turn with `WouldBlock`. No multicast, host-interface binding or daemon thread is needed by this permanent test.
 
@@ -217,7 +217,7 @@ A throwaway executable then exercised the actual public `ServiceDaemon` API and 
 
 During a further continuous empty-datagram stream, status and bounded-metrics commands remained responsive. All three actual daemon actors acknowledged shutdown in approximately 2.74 ms while the injector sent 1,439 empty datagrams. These counts/timings describe this finite smoke, not a throughput or denial-of-service guarantee. This is dependency-level multicast/discovery evidence, not a new whole-backend, encrypted-transfer or native Android interoperability result. The temporary executable was removed after observation.
 
-The locked workspace passed **167 Rust tests**, with four ignored cases (physical SDP, native multicast and two no-run documentation examples). All five service-maintenance regressions, installer/package shell syntax, Python-extension syntax and native Omarchy plugin validation passed. The two deprecated protobuf status-field warnings in the existing protocol compatibility code remain unchanged. No registry dependency, version, permission, transport/authentication or release asset was changed for this source correction.
+Before the release-version increment, the locked workspace passed **167 Rust tests**, with four ignored cases (physical SDP, native multicast and two no-run documentation examples). All five service-maintenance regressions, installer/package shell syntax, Python-extension syntax and native Omarchy plugin validation passed. The two deprecated protobuf status-field warnings in the existing protocol compatibility code remain unchanged. The fix first landed at `f1c6208be706bb6580f5ee19aae005b4da486bf4`; version 0.3.6 publishes it with a matching backend/client and release artifacts. No registry dependency, permission or transport/authentication behavior was changed.
 
 ## Evidence interpretation
 

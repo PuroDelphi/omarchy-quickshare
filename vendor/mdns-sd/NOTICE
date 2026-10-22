@@ -17,7 +17,7 @@ Local security modifications for Omarchy Quick Share 0.3.5, 2026-10-21:
   pressure cannot prevent control/expiry/shutdown progress.
 - Add fixed-label retention gauges and deterministic behavioral regressions.
 
-Additional local security modification after Omarchy Quick Share 0.3.5:
+Additional local security modification for Omarchy Quick Share 0.3.6:
 - Discard empty UDP datagrams without removing/replacing the live socket or
   its poll registration; preserve the per-turn quota and later DNS reception.
 - Add an ephemeral-loopback socket regression crossing the per-turn quota

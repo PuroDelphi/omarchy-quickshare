@@ -66,7 +66,7 @@ Finish or cancel active transfers first.
 omarchy plugin update macondo.quickshare
 ```
 
-Open **Settings** in the panel to reveal the **Service** controls, then select **Update service**. This updates the Rust backend from the current plugin checkout; system-package changes require terminal authorization. Backend **0.3.5** is required for the DNS resource-limit security fix; updating the panel or reloading the shell alone does not update an older daemon.
+Open **Settings** in the panel to reveal the **Service** controls, then select **Update service**. This updates the Rust backend from the current plugin checkout; system-package changes require terminal authorization. Backend **0.3.6** is required for the empty-UDP mDNS reception fix and includes the earlier DNS resource limits; updating the panel or reloading the shell alone does not update an older daemon.
 
 To uninstall, open **Settings**, select **Remove service** first, then run:
 
