@@ -32,6 +32,7 @@ For a release build, use `cargo build --release --locked --package omarchy-quick
 - Own only project resources; reject foreign destination/link collisions. Preserve downloads/configuration/preferences during lifecycle operations.
 - Add focused regression coverage for behavior changes, migrate affected callers and remove obsolete paths rather than add compatibility shims without need.
 - Update affected user, architecture and verification documentation. Describe observed behavior accurately; do not recast a failed transfer as success.
+- For a backend security release, update `MINIMUM_BACKEND_VERSION` in `scripts/service-common.sh` along with release versions and exercise Install/repair with an older system package, not only Update. Verify both the executable on disk and `backend_version` from the running daemon; snapshot API compatibility is not a security-version check. Keep the stable-version boundary regressions and current minimum documentation aligned.
 - Preserve pinned dependency provenance and notices. If dependencies change, update `Cargo.lock` and regenerate notices with `./scripts/update-notices.sh`.
 
 ## Evidence in pull requests

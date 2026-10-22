@@ -16,6 +16,33 @@ BACKEND_DATA="$DATA_HOME/omarchy-quickshare/backend"
 NAUTILUS_TARGET="$PLUGIN_DIR/nautilus/omarchy_quickshare.py"
 NAUTILUS_EXTENSION="$DATA_HOME/nautilus-python/extensions/omarchy_quickshare.py"
 LANGUAGE=${QUICKSHARE_LANGUAGE:-en}
+MINIMUM_BACKEND_VERSION=0.3.7
+backend_version_supported() {
+  local version=${1:-} index LC_ALL=C
+  local -a actual minimum
+  [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  IFS=. read -r -a actual <<< "$version"
+  IFS=. read -r -a minimum <<< "$MINIMUM_BACKEND_VERSION"
+  for index in 0 1 2; do
+    if (( ${#actual[index]} > ${#minimum[index]} )); then return 0; fi
+    if (( ${#actual[index]} < ${#minimum[index]} )); then return 1; fi
+    if [[ ${actual[index]} > "${minimum[index]}" ]]; then return 0; fi
+    if [[ ${actual[index]} != "${minimum[index]}" ]]; then return 1; fi
+  done
+  return 0
+}
+backend_supported() {
+  local binary=$1 identity
+  [[ -x $binary ]] || return 1
+  identity=$("$binary" --version) || return 1
+  [[ $identity == 'omarchy-quickshare '* ]] || return 1
+  backend_version_supported "${identity#omarchy-quickshare }"
+}
+backend_snapshot_supported() {
+  local snapshot=$1 version
+  version=$(jq -er 'select(.version == 1) | .backend_version | select(type == "string")' <<<"$snapshot") || return 1
+  backend_version_supported "$version"
+}
 say() { if [[ $LANGUAGE == es ]]; then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
 fail() { say "$1" "$2" >&2; exit 1; }
 require_commands() {
@@ -138,7 +165,12 @@ register_nautilus() {
   fi
 }
 install_unit() {
-  local mode=$1
+  local mode=$1 binary snapshot
+  if [[ $mode == package ]]; then binary=$SYSTEM_BINARY; else binary=$BINARY; fi
+  printf 'disabled\n' > "$STATE_DIR/disabled"
+  backend_supported "$binary" || fail \
+    "Backend $MINIMUM_BACKEND_VERSION or newer (stable) is required; repair the service before starting it." \
+    "Se requiere el servicio estable $MINIMUM_BACKEND_VERSION o posterior; repáralo antes de iniciarlo."
   mkdir -p "$UNIT_DIR"
   if [[ -L $UNIT && $(readlink "$UNIT") == /dev/null && -f $STATE_DIR/disabled ]]; then rm -- "$UNIT"; fi
   install -m644 "$ROOT/packaging/omarchy-quickshare.service" "$UNIT"
@@ -152,12 +184,25 @@ install_unit() {
   printf '%s\n' "$mode" > "$STATE_DIR/mode"
   systemctl --user daemon-reload
   systemctl --user enable omarchy-quickshare.service
-  systemctl --user start omarchy-quickshare.service
-  local binary
-  binary=$(current_binary)
-  "$binary" status | jq -e '.version == 1' >/dev/null || fail 'Service startup failed. Review journalctl --user -u omarchy-quickshare.service.' 'El servicio no inició. Revisa journalctl --user -u omarchy-quickshare.service.'
+  if ! systemctl --user start omarchy-quickshare.service; then
+    reject_startup
+  fi
+  if ! snapshot=$("$binary" status) || ! backend_snapshot_supported "$snapshot"; then
+    reject_startup
+  fi
   register_nautilus
   rm -f -- "$STATE_DIR/disabled"
+}
+reject_startup() {
+  # This startup has not been attested. Never leave it running or auto-enabled.
+  systemctl --user stop omarchy-quickshare.service || say \
+    'Could not stop the unverified service; stop it manually before retrying.' \
+    'No se pudo detener el servicio sin verificar; detenlo manualmente antes de reintentar.' >&2
+  systemctl --user disable omarchy-quickshare.service || say \
+    'Could not disable the unverified service; disable it manually before retrying.' \
+    'No se pudo deshabilitar el servicio sin verificar; deshabilítalo manualmente antes de reintentar.' >&2
+  fail 'Service startup failed or the running backend is unsupported. Review journalctl --user -u omarchy-quickshare.service.' \
+    'El servicio no inició o la versión activa no es compatible. Revisa journalctl --user -u omarchy-quickshare.service.'
 }
 confirm() {
   local answer

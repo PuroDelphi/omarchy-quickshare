@@ -13,11 +13,8 @@ STAGE=$(mktemp -d "$STATE_DIR/.build.XXXXXXXX")
 trap 'rm -rf -- "$STAGE"' EXIT
 if package_installed; then
   MODE=package
-  require_commands pacman vercmp
-  VERSION=$("$SYSTEM_BINARY" --version)
-  VERSION=${VERSION##* }
-  [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || fail 'Cannot determine the packaged backend version.' 'No se puede determinar la versión del servicio empaquetado.'
-  if [[ $ACTION == update || $(vercmp "$VERSION" 0.1.2) -lt 0 ]]; then
+  require_commands pacman
+  if [[ $ACTION == update ]] || ! backend_supported "$SYSTEM_BINARY"; then
     require_commands makepkg cargo rustc protoc pkg-config sudo
     confirm \
       'Build the current checkout and authorize sudo pacman -U for the Quick Share package? Shared dependencies will not be removed. [y/N]' \
@@ -28,9 +25,9 @@ if package_installed; then
     check_resources
     pause_service
     sudo pacman -U -- "${PACKAGES[0]}"
-    VERSION=$("$SYSTEM_BINARY" --version)
-    VERSION=${VERSION##* }
-    [[ $VERSION == "$(jq -r .version "$ROOT/manifest.json")" ]] || fail 'Installed backend version does not match the checkout.' 'La versión del servicio instalado no coincide con el checkout.'
+    backend_supported "$SYSTEM_BINARY" &&
+      [[ $("$SYSTEM_BINARY" --version) == "omarchy-quickshare $(jq -r .version "$ROOT/manifest.json")" ]] || fail \
+      'Installed backend is unsupported or does not match the checkout.' 'El servicio instalado no es compatible o no coincide con el checkout.'
   else
     pause_service
   fi
@@ -65,6 +62,8 @@ else
     --package omarchy-quickshare --message-format=json-render-diagnostics |
     jq -er 'select(.reason == "compiler-artifact" and .target.name == "omarchy-quickshare" and (.target.kind | index("bin")) != null) | .executable | select(. != null)')
   [[ -x $BUILT_BINARY ]] || fail 'Cargo did not produce the backend executable.' 'Cargo no produjo el ejecutable del servicio.'
+  backend_supported "$BUILT_BINARY" || fail \
+    'The built backend is not a supported stable version.' 'El servicio compilado no es una versión estable compatible.'
   # Preserve matching GPL corresponding source alongside all notices, not a mutable Git URL alone.
   tar --exclude=target --exclude=.git --exclude=__pycache__ --exclude='*.pyc' -czf "$STAGE/source.tar.gz" -C "$ROOT" \
     Cargo.toml Cargo.lock src vendor scripts packaging manifest.json Service.qml BarWidget.qml Panel.qml TransferEffects.qml TransferEffectsArt.qml nautilus LICENSE

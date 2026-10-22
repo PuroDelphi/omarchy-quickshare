@@ -22,7 +22,7 @@ The daemon continues independently of the panel. A shell reload reconnects the U
 - Interface: `io.omarchy.QuickShare1`
 - Stable plugin ID: `macondo.quickshare`
 
-Snapshots carry an instance ID, monotonic revision, visibility/deadline, backend availability, nearby devices, transfer IDs/states, bytes, transport and errors. The UI ignores stale revisions and recovers after service ownership changes.
+Snapshots carry API `version: 1`, the executing daemon's `backend_version` (compiled from its Cargo package version), an instance ID, monotonic revision, visibility/deadline, backend availability, nearby devices, transfer IDs/states, bytes, transport and errors. API version 1 alone is not a security-version assertion. Since **0.3.7**, the UI checks both the selected client's version and the actual snapshot implementation against the shared stable-backend minimum in `scripts/service-common.sh`. Missing, malformed, prerelease or older implementation identities cannot make the service operational. The UI ignores stale revisions and recovers after service ownership changes. This is local session version identification, not cryptographic attestation against another process in the same trusted user session.
 
 A transfer's medium and terminal result come from engine state, not a UI capability label. Send/accept/reject/cancel operate on the actual peer or transfer IDs.
 
@@ -83,7 +83,7 @@ The byte charge includes concrete record storage, owned string/vector capacities
 
 Subtype lookup and timer deadlines derive from live bounded records; no independent subtype map or append-only packet-timer list survives churn. Pending resolutions and retries retire on goodbye, expiry, successful resolution, exhausted retries and stopped browsing. Parsing checks widened entry/TTL arithmetic, compressed-name traversal and RDATA boundaries before constructing retained state. Browse/monitor channels remain bounded and spontaneous delivery is nonblocking; bounded socket work allows commands, expiry and shutdown to progress during continuous traffic. Existing `get_metrics` exposes fixed-label cache/work gauges, not per-name labels or a telemetry service.
 
-Since backend **0.3.6**, empty UDP datagrams are discarded as invalid DNS input, not interpreted as stream EOF. They leave the interface socket and its poll registration intact, count against the same 32-datagram turn quota and allow subsequent valid DNS responses to be processed without recreating the daemon. Backend/client 0.3.6 or later is required; updating only QML or reloading the shell cannot change an older executable.
+Since backend **0.3.6**, empty UDP datagrams are discarded as invalid DNS input, not interpreted as stream EOF. They leave the interface socket and its poll registration intact, count against the same 32-datagram turn quota and allow subsequent valid DNS responses to be processed without recreating the daemon. The current installation/UI minimum is **0.3.7**, which adds enforced executable/runtime version checks; updating only QML or reloading the shell cannot change an older executable.
 
 Unchanged answers still renew DNS TTL without emitting a resolution event. The discovery browser re-browses every **60 seconds** only to obtain fresh observations for the application's monotonic lease; its refresh is **not** the raw-DNS memory boundary. Old-generation events are drained/discarded.
 
@@ -142,6 +142,8 @@ Use `--help` for current arguments. `doctor` inspects local tools, radio availab
 ## Locations and maintenance
 
 Native Omarchy manages the Git checkout under its plugin directory. The service and Nautilus registration are maintained separately by the panel's setup terminal. Configuration and received data are not code-installation resources. See [Installation](INSTALLATION.md) for source/package modes and ownership rules.
+
+Since **0.3.7**, both Install/repair and Update enforce a stable backend minimum before enabling/starting a selected executable. An older system package follows the explicit current-checkout build and authorized `pacman -U` path even for Install/repair; declining or failing that operation cannot produce an installed-success receipt. Startup additionally checks the running daemon's snapshot implementation before finishing setup or registering Nautilus. Unverified startup leaves maintenance disabled and stops the service it started. An old active service remains inspectable for the transfer-idle check so it can be upgraded safely rather than blocked from maintenance.
 
 Scope firewall permissions to trusted interfaces and actual ports. Do not expose the service through port forwarding, globally disable the firewall or grant unrestricted system authorization.
 

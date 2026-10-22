@@ -20,7 +20,8 @@ Item {
   property var snapshot: null
   property bool online: false
   property int generation: 0
-  property bool watchActive: false
+  property string lastSnapshotInstanceId: ""
+  property double lastSnapshotRevision: -1
   property int retrySeconds: 1
   property var cancellingTransfers: ({})
   property int pendingCommands: 0
@@ -39,7 +40,12 @@ Item {
   property string watchError: ""
   property string savedLanguage: "en"
   property bool backendInstalled: false
-  property bool backendCompatible: false
+  property bool backendClientCompatible: false
+  property bool runtimeCompatible: false
+  readonly property bool backendCompatible: backendClientCompatible && runtimeCompatible
+  property string minimumBackendVersion: ""
+  property var runtimeIssue: null
+  readonly property string runtimeError: runtimeIssue ? tr(runtimeIssue.en, runtimeIssue.es) + (runtimeIssue.detail ? "\n" + runtimeIssue.detail : "") : ""
   property string backendBinary: ""
   property bool serviceDisabled: false
   property bool disabledLoaded: false
@@ -50,6 +56,7 @@ Item {
   readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config"
   readonly property string serviceState: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy-quickshare/service"
   readonly property string setupScript: decodeURIComponent(String(Qt.resolvedUrl("scripts/setup-service.sh")).replace(/^file:\/\//, ""))
+  readonly property string serviceCommonScript: decodeURIComponent(String(Qt.resolvedUrl("scripts/service-common.sh")).replace(/^file:\/\//, ""))
   readonly property bool activeTransfers: transfers.some(function(transfer) {
     return ["completed", "rejected", "cancelled", "failed"].indexOf(transfer.state) === -1
   })
@@ -63,7 +70,7 @@ Item {
     && snapshot.qr_send.id !== qrStoppingId && snapshot.qr_send.expires_at > now ? snapshot.qr_send : null
   readonly property int qrRemainingSeconds: qrSend ? Math.max(0, Math.ceil(qrSend.expires_at - now)) : 0
   onSelectedFilesChanged: stopQr()
-  readonly property bool directoryPickerSupported: !!snapshot && snapshot.directory_picker_supported === true
+  readonly property bool directoryPickerSupported: online && runtimeCompatible && !!snapshot && snapshot.directory_picker_supported === true
   readonly property bool discoverable: online && snapshot && snapshot.visible &&
     (snapshot.visibility_expires_at === null || snapshot.visibility_expires_at > now)
   readonly property int remainingSeconds: discoverable && snapshot.visibility_expires_at !== null
@@ -71,7 +78,7 @@ Item {
   readonly property string backendErrors: snapshot ? (snapshot.errors || []).map(function(e) {
     return typeof e === "string" ? e : JSON.stringify(e)
   }).join("\n") : ""
-  readonly property string errorText: [localError, effectsPreferenceError, !online && backendInstalled && backendCompatible && !serviceDisabled && !setupBusy ? (watchError || tr("Service unavailable. Use Install service to repair setup, or review its terminal output.", "Servicio no disponible. Usa Instalar servicio para reparar la instalación o revisa su terminal.")) : "", online ? watchError : "", backendErrors !== dismissedBackendErrors ? backendErrors : ""].filter(function(s) { return s.length > 0 }).join("\n")
+  readonly property string errorText: [localError, effectsPreferenceError, runtimeError, !online && backendInstalled && backendClientCompatible && !runtimeIssue && !serviceDisabled && !setupBusy ? (watchError || tr("Service unavailable. Use Install service to repair setup, or review its terminal output.", "Servicio no disponible. Usa Instalar servicio para reparar la instalación o revisa su terminal.")) : "", online ? watchError : "", backendErrors !== dismissedBackendErrors ? backendErrors : ""].filter(function(s) { return s.length > 0 }).join("\n")
 
   function tr(en, es) { return language === "es" ? es : en }
   function fail(en, es, detail) { localIssue = { en: en, es: es, detail: detail || "" } }
@@ -153,7 +160,26 @@ Item {
   onTransferEffectsEnabledChanged: if (!transferEffectsEnabled) stopTransferEffectsPreview()
   onActiveTransfersChanged: if (online && activeTransfers) stopTransferEffectsPreview()
   onOnlineChanged: if (!online || activeTransfers) stopTransferEffectsPreview()
-  function probeBackend() { if (!backendProbe.running) backendProbe.running = true }
+  function invalidateRuntime() {
+    generation++
+    online = false
+    runtimeCompatible = false
+    snapshot = null
+    cancellingTransfers = ({})
+    picking = false
+    pickingDirectory = false
+    qrPendingStart = false
+    qrCancelAfterStart = false
+    qrStoppingId = ""
+  }
+  function probeBackend() {
+    if (backendProbe.running) return
+    reconnect.stop()
+    invalidateRuntime()
+    runtimeIssue = null
+    watch.running = false
+    backendProbe.running = true
+  }
   function runSetup(action) {
     if (["install", "update", "remove"].indexOf(action) === -1 || busy) return
     if (activeTransfers) {
@@ -164,7 +190,7 @@ Item {
     setupNotice = { en: "Authorize maintenance in the Omarchy terminal. Preferences and received files are preserved.", es: "Autoriza el mantenimiento en la terminal de Omarchy. Se conservan preferencias y archivos recibidos." }
     reconnect.stop()
     watch.running = false
-    online = false
+    invalidateRuntime()
     setupLauncher.command = ["omarchy", "launch", "tui", "--app-id=io.omarchy.quickshare.setup", "bash", setupScript, action, language]
     setupLauncher.running = true
   }
@@ -188,19 +214,46 @@ Item {
     }
   }
   onServiceDisabledChanged: {
-    if (serviceDisabled) { reconnect.stop(); watch.running = false; online = false }
+    if (serviceDisabled) { reconnect.stop(); watch.running = false; invalidateRuntime() }
     else if (!setupBusy) probeBackend()
   }
 
+  function stableVersion(value) {
+    return typeof value === "string" && /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value)
+  }
+  function runtimeVersionSupported(value) {
+    if (!stableVersion(value) || !stableVersion(minimumBackendVersion)) return false
+    var actual = value.split(".")
+    var minimum = minimumBackendVersion.split(".")
+    for (var i = 0; i < 3; i++) {
+      if (actual[i].length !== minimum[i].length) return actual[i].length > minimum[i].length
+      if (actual[i] !== minimum[i]) return actual[i] > minimum[i]
+    }
+    return true
+  }
   function consume(line, sourceGeneration) {
     if (sourceGeneration !== undefined && sourceGeneration !== generation) return
-    if (!line.trim()) return
+    if (!line.trim() && sourceGeneration === undefined) return
     try {
       var next = JSON.parse(line)
+      // Identity is checked before revision deduplication: an old/replayed record
+      // cannot retain a previously trusted online state.
+      if (!backendClientCompatible || backendProbe.running || serviceDisabled || setupBusy ||
+          !runtimeVersionSupported(next && next.backend_version)) {
+        invalidateRuntime()
+        runtimeIssue = {
+          en: "The running service must report a stable backend version of at least " + (minimumBackendVersion || "the required minimum") + ". Use Install service to upgrade and restart it.",
+          es: "El servicio activo debe indicar una versión estable de al menos " + (minimumBackendVersion || "la mínima requerida") + ". Usa Instalar servicio para actualizarlo y reiniciarlo."
+        }
+        return
+      }
       if (next.version !== 1 || typeof next.instance_id !== "string" || !Number.isSafeInteger(next.revision) ||
-          !Array.isArray(next.devices) || !Array.isArray(next.transfers))
-        throw new Error(tr("Incompatible snapshot format", "Formato de snapshot incompatible"))
-      if (snapshot && next.instance_id === snapshot.instance_id && next.revision <= snapshot.revision) return
+          !Array.isArray(next.devices) || !Array.isArray(next.transfers)) {
+        invalidateRuntime()
+        runtimeIssue = { en: "Incompatible snapshot format. Use Install service to repair it.", es: "Formato de snapshot incompatible. Usa Instalar servicio para repararlo." }
+        return
+      }
+      if (next.instance_id === lastSnapshotInstanceId && next.revision <= lastSnapshotRevision) return
       var remaining = {}
       if (snapshot && next.instance_id === snapshot.instance_id) {
         next.transfers.forEach(function(transfer) {
@@ -211,11 +264,17 @@ Item {
       }
       cancellingTransfers = remaining
       snapshot = next
+      lastSnapshotInstanceId = next.instance_id
+      lastSnapshotRevision = next.revision
+      runtimeCompatible = true
       online = true
       watchError = ""
       retrySeconds = 1
+      runtimeIssue = null
+      consumePendingShare()
     } catch (e) {
-      fail("Cannot read the service state.", "No se pudo leer el estado del servicio.", e.message)
+      invalidateRuntime()
+      runtimeIssue = { en: "Cannot trust the running service state.", es: "No se puede confiar en el estado del servicio activo.", detail: e.message }
     }
   }
   function clearErrors() {
@@ -228,8 +287,12 @@ Item {
       fail("Install service before using this action.", "Instala el servicio antes de usar esta acción.")
       return
     }
-    if (!backendCompatible) {
+    if (!backendClientCompatible) {
       fail("Update service before using this action.", "Actualiza el servicio antes de usar esta acción.")
+      return
+    }
+    if (!online || !runtimeCompatible || backendProbe.running || setupBusy) {
+      fail("Wait for a compatible running service before using this action. Use Install service to repair it.", "Espera a un servicio activo compatible antes de usar esta acción. Usa Instalar servicio para repararlo.")
       return
     }
     var task = commandComponent.createObject(root, {
@@ -249,7 +312,6 @@ Item {
     }
     disabledFile.reload()
     probeBackend()
-    if (online) invoke(["status"], "snapshot")
   }
   function setDiscoverable(enabled) { invoke(["visible", enabled ? "120" : "0"]) }
   function consent(enabled) { invoke(["network-consent", enabled ? "on" : "off"]) }
@@ -285,13 +347,14 @@ Item {
     probeBackend()
   }
   function consumePendingShare() {
+    if (!online || !runtimeCompatible) return
     var request = pendingShare
     pendingShare = null
     if (!request || request.selectionRequest !== selectionGeneration) return
     invoke(["take-share", request.token], "take-share", "", undefined, request.selectionRequest)
   }
   function pickFiles() {
-    if (picking || serviceDisabled || !backendInstalled || !backendCompatible) return
+    if (!online || picking || serviceDisabled || !backendInstalled || !backendCompatible) return
     var requestGeneration = beginSelectionRequest(false)
     picking = true
     invoke(["pick-files"], "picker", "", undefined, requestGeneration)
@@ -330,10 +393,9 @@ Item {
     invoke(["cancel", id], "cancel", id)
   }
   function disconnected(message) {
-    if (watchActive) { generation++; watchActive = false }
-    online = false
+    invalidateRuntime()
     if (!watchError && message) watchError = message
-    if (backendInstalled && !serviceDisabled && !setupBusy && !reconnect.running) {
+    if (backendInstalled && backendClientCompatible && !backendProbe.running && !serviceDisabled && !setupBusy && !reconnect.running) {
       reconnect.restart()
       retrySeconds = Math.min(30, retrySeconds * 2)
     }
@@ -388,19 +450,26 @@ Item {
   }
   Process {
     id: backendProbe
-    command: ["bash", "-c", "binary=''; if [[ -x /usr/bin/omarchy-quickshare ]]; then binary=/usr/bin/omarchy-quickshare; elif [[ -x \"$1/.local/bin/omarchy-quickshare\" ]]; then binary=\"$1/.local/bin/omarchy-quickshare\"; fi; compatible=false; if [[ -n $binary ]]; then version=$(\"$binary\" --version) || exit 1; version=${version##* }; if [[ $version =~ ^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] && [[ $(vercmp \"$version\" 0.1.2) -ge 0 ]]; then compatible=true; fi; fi; jq -cn --arg binary \"$binary\" --argjson compatible \"$compatible\" '{binary:$binary,compatible:$compatible}'", "bash", Quickshell.env("HOME")]
+    command: ["bash", "-c", "source \"$2\" || exit 1; binary=''; if [[ -x /usr/bin/omarchy-quickshare ]]; then binary=/usr/bin/omarchy-quickshare; elif [[ -x \"$1/.local/bin/omarchy-quickshare\" ]]; then binary=\"$1/.local/bin/omarchy-quickshare\"; fi; compatible=false; if [[ -n $binary ]] && backend_supported \"$binary\"; then compatible=true; fi; jq -cn --arg binary \"$binary\" --argjson compatible \"$compatible\" --arg minimum \"$MINIMUM_BACKEND_VERSION\" '{binary:$binary,compatible:$compatible,minimum:$minimum}'", "bash", Quickshell.env("HOME"), root.serviceCommonScript]
     stdout: StdioCollector { id: backendOutput; waitForEnd: true }
     onExited: function(code) {
       var result = {}
       try { if (code === 0) result = JSON.parse(backendOutput.text) } catch (e) {}
       root.backendBinary = result.binary || ""
       root.backendInstalled = root.backendBinary !== ""
-      root.backendCompatible = result.compatible === true
-      if (root.backendInstalled && root.backendCompatible && root.disabledLoaded && !root.serviceDisabled && !root.setupBusy && !watch.running) {
+      root.minimumBackendVersion = typeof result.minimum === "string" ? result.minimum : ""
+      root.backendClientCompatible = result.compatible === true && root.stableVersion(root.minimumBackendVersion)
+      if (!root.backendClientCompatible) {
+        root.invalidateRuntime()
+        root.runtimeIssue = root.backendInstalled && root.stableVersion(root.minimumBackendVersion)
+          ? { en: "Update the installed service to a stable version of at least " + root.minimumBackendVersion + ". Use Install service to upgrade and restart it.", es: "Actualiza el servicio instalado a una versión estable de al menos " + root.minimumBackendVersion + ". Usa Instalar servicio para actualizarlo y reiniciarlo." }
+          : root.backendInstalled || code !== 0 ? { en: "Cannot verify the installed service. Use Install service to repair setup.", es: "No se pudo verificar el servicio instalado. Usa Instalar servicio para reparar la instalación." } : null
+      }
+      if (root.backendInstalled && root.backendClientCompatible && root.disabledLoaded && !root.serviceDisabled && !root.setupBusy && !watch.running) {
         watch.command = ["/usr/bin/env", root.backendBinary, "watch"]
         watch.running = true
       }
-      root.consumePendingShare()
+      if (root.online && root.runtimeCompatible) root.consumePendingShare()
     }
   }
   Process {
@@ -492,9 +561,9 @@ Item {
     // Absolute backend selection avoids a stale graphical-session PATH or a shadow binary.
     command: []
     onStarted: {
-      root.generation++
-      root.watchActive = true
-      root.snapshot = null
+      root.invalidateRuntime()
+      root.lastSnapshotInstanceId = ""
+      root.lastSnapshotRevision = -1
     }
     stdout: SplitParser { onRead: line => root.consume(line) }
     stderr: SplitParser { onRead: line => { if (line.trim()) root.watchError = line.trim() } }
@@ -522,6 +591,12 @@ Item {
       onExited: function(exitCode, exitStatus) { finish(exitCode, exitStatus) }
       function finish(exitCode, exitStatus) {
         if (purpose !== "picker" && purpose !== "directory-picker") root.pendingCommands--
+        var operational = purpose !== "language" && purpose !== "effects-preference"
+        if (operational && (sourceGeneration !== root.generation ||
+            (purpose !== "snapshot" && (!root.online || !root.runtimeCompatible)))) {
+          Qt.callLater(function() { task.destroy() })
+          return
+        }
         if (purpose === "picker") root.picking = false
         if (purpose === "qr-send") root.qrPendingStart = false
         if (purpose === "directory-picker") root.pickingDirectory = false
@@ -530,6 +605,7 @@ Item {
           return
         }
         if (exitCode !== 0 || exitStatus !== 0) {
+          if (purpose === "snapshot") root.invalidateRuntime()
           if (purpose === "cancel") root.clearCancellationRequest(transferId)
           if (purpose === "qr-send") root.qrCancelAfterStart = true
           if (purpose === "qr-stop" && root.qrStoppingId === transferId) root.qrStoppingId = ""

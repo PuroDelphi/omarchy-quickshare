@@ -106,6 +106,7 @@ struct Capabilities {
 #[derive(Serialize)]
 struct Snapshot {
     version: u32,
+    backend_version: &'static str,
     instance_id: String,
     visible: bool,
     visibility_expires_at: Option<u64>,
@@ -862,6 +863,7 @@ pub async fn serve(port: u16, download: Option<PathBuf>, options: EngineOptions)
     let shared = Arc::new(Shared {
         state: RwLock::new(Snapshot {
             version: 1,
+            backend_version: env!("CARGO_PKG_VERSION"),
             visible: false,
             visibility_expires_at: None,
             network_consent: false,
@@ -1112,6 +1114,7 @@ mod tests {
         let shared = Arc::new(Shared {
             state: RwLock::new(Snapshot {
                 version: 1,
+                backend_version: env!("CARGO_PKG_VERSION"),
                 visible: false,
                 visibility_expires_at: None,
                 network_consent: false,
