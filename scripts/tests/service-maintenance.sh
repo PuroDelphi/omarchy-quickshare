@@ -245,6 +245,39 @@ CASE
   done
 done
 
+# check_nautilus must probe the system interpreter that nautilus-python embeds,
+# not whichever `python` (a mise/pyenv/asdf shim) is first on PATH. The PATH
+# python and the system interpreter are fixtures with independent outcomes.
+nautilus_case() {
+  local name=$1 path_status=$2 system_status=$3 expected=$4 result output
+  CASE_NAME=$name
+  CASE_DIR="$WORK/$name"
+  mkdir -p "$CASE_DIR/bin"
+  printf '#!/usr/bin/env bash\nexit %s\n' "$path_status" > "$CASE_DIR/bin/python"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$CASE_DIR/bin/nautilus"
+  printf '#!/usr/bin/env bash\ntouch "$(dirname "${BASH_SOURCE[0]}")/system-probed"\nexit %s\n' "$system_status" > "$CASE_DIR/system-python"
+  : > "$CASE_DIR/libnautilus-python.so"
+  chmod +x "$CASE_DIR/bin/"* "$CASE_DIR/system-python"
+  if CASE_DIR="$CASE_DIR" COMMON="$ROOT/scripts/service-common.sh" PATH="$CASE_DIR/bin:$PATH" \
+    bash > "$CASE_DIR/output" 2>&1 <<'CASE'
+set -euo pipefail
+source "$COMMON"
+SYSTEM_PYTHON="$CASE_DIR/system-python"
+NAUTILUS_PYTHON_LIBRARY="$CASE_DIR/libnautilus-python.so"
+check_nautilus
+CASE
+  then result=0; else result=$?; fi
+  assert "expected check exit $expected, got $result (see $CASE_DIR/output)" test "$result" = "$expected"
+  assert 'the system interpreter was never probed' test -e "$CASE_DIR/system-probed"
+  if (( expected != 0 )); then
+    output=$(<"$CASE_DIR/output")
+    [[ $output == *'Install nautilus, nautilus-python'* ]] || { printf '%s: failed for an unexpected reason: %s\n' "$name" "$output" >&2; exit 1; }
+  fi
+  printf '%s: passed\n' "$name"
+}
+nautilus_case nautilus-path-python-without-gi 1 0 0
+nautilus_case nautilus-system-python-without-gi 0 1 1
+
 CASE_NAME=version-boundaries
 source "$ROOT/scripts/service-common.sh"
 for version in 0.3.7 0.3.8 0.3.10 0.4.0 0.10.0 1.0.0 10.0.0; do
