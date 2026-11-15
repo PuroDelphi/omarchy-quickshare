@@ -68,6 +68,8 @@ omarchy plugin update macondo.quickshare
 
 Open **Settings** in the panel to reveal the **Service** controls, then select **Update service**. This updates the Rust backend from the current plugin checkout; system-package changes require terminal authorization. Backend/client **0.3.7 or newer** is required: installation/repair and the panel verify the installed executable and the running daemon's implementation version, not only the snapshot API number. Install service also offers an authorized upgrade of an older system package. This includes the earlier mDNS reception/resource-limit and outgoing-file fixes; updating the panel or reloading the shell alone does not update an older daemon.
 
+Stable **0.3.8** fixes service setup when mise/pyenv/asdf selects another Python and restores Bluetooth automatically after an adapter power cycle or an initially unavailable adapter. Update the plugin and then **Update service** to obtain both fixes; if the original installation failed, choose **Install service** instead. The security minimum remains 0.3.7.
+
 To uninstall, open **Settings**, select **Remove service** first, then run:
 
 ```bash

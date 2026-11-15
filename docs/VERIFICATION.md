@@ -231,6 +231,16 @@ Runtime scope: UID 1000, NoNewPrivileges, private HOME/XDG paths, user/network n
 
 The locked 0.3.7 workspace passed **167 Rust tests**, four ignored cases (physical SDP, native multicast, two no-run documentation examples), and the actual debug build, package/installer syntax, Python-extension syntax and native plugin validation passed. The two existing deprecated protobuf status-field warnings remain. Registry dependencies and the previously accepted transport/file/resource fixes were not changed.
 
+## System Python and Bluetooth recovery — 0.3.8
+
+PRs [#4](https://github.com/PuroDelphi/omarchy-quickshare/pull/4) and [#6](https://github.com/PuroDelphi/omarchy-quickshare/pull/6), contributed by **alexandru-calinoiu**, were integrated into `alpha` after synchronizing it with stable 0.3.7. The 0.3.8 locked workspace passed **174 Rust tests**, with four ignored cases (physical SDP, native multicast and two no-run documentation examples). The two existing deprecated protobuf compatibility-field warnings remain.
+
+The seven new Bluetooth supervisor regressions exercise backend withdrawal/replacement, recovery after initialization failures, duplicate-error suppression, waiting for an old reference, cancellation during a run/backoff, healthy-run failure-streak reset, the short-lived-run cutoff and discovery following successive instances without restarting a failed discovery on the same instance. These are deterministic supervisor-policy tests, not physical BlueZ/Android evidence.
+
+All **29 service-maintenance cases** passed, including both interpreter-selection regressions. Installer/package shell syntax, Python-extension AST syntax and native `omarchy plugin validate .` passed. An additional throwaway PATH shim returned exit 91 for every `python` call; the actual production `check_nautilus` still successfully imported the installed system GObject/Nautilus/Gtk bindings through `/usr/bin/python`. The shim was removed afterward. This is a real dependency probe, not a full host installation/update.
+
+The PR author separately reports real BlueZ 5.87 adapter power-cycle and blocked-start recovery, including active receive visibility and settings restoration; those physical observations were not independently repeated for this release. No new Android discovery/transfer, interrupted-transfer recovery or combined Wi-Fi/Bluetooth airplane-mode result is claimed. No host service, packages, radio/network settings, preferences or received files were changed by these local checks. Recovery does not erase historical errors or power on the adapter; the stable security minimum remains 0.3.7.
+
 ## Evidence interpretation
 
 Successful transfer means engine completion plus the stated integrity method. A valid media container, a round trip, a capability label or 0/0 bytes alone is not independent destination integrity.
