@@ -161,7 +161,7 @@ For terminal-only maintenance, the panel runs this same helper:
 bash "$HOME/.config/omarchy/plugins/macondo.quickshare/scripts/setup-service.sh" install en
 ```
 
-Actions are `install`, `update` and `remove`; language can be `en` or `es`. This is backend maintenance, not another plugin installer. Source builds use Arch's `/usr/bin/cargo` and `/usr/bin/rustc` so an inactive toolchain shim does not select a different compiler; the owned build cache is outside the watched plugin checkout.
+Actions are `install`, `update` and `remove`; language can be `en` or `es`. This is backend maintenance, not another plugin installer. Source builds use Arch's `/usr/bin/cargo` and `/usr/bin/rustc` so an inactive toolchain shim does not select a different compiler; the owned build cache is outside the watched plugin checkout. The Nautilus dependency check likewise probes `/usr/bin/python`, the interpreter nautilus-python embeds, so a mise, pyenv or asdf `python` earlier in `PATH` cannot make it fail.
 
 Package builds use the user's cache rather than memory-backed `/tmp` by default and remove their temporary work directory when finished. An explicit `TMPDIR` takes precedence; choose a filesystem with enough space for the Rust build.
 

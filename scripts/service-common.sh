@@ -15,6 +15,9 @@ SYSTEM_BINARY=/usr/bin/omarchy-quickshare
 BACKEND_DATA="$DATA_HOME/omarchy-quickshare/backend"
 NAUTILUS_TARGET="$PLUGIN_DIR/nautilus/omarchy_quickshare.py"
 NAUTILUS_EXTENSION="$DATA_HOME/nautilus-python/extensions/omarchy_quickshare.py"
+# nautilus-python embeds the system interpreter; a mise/pyenv/asdf python earlier in PATH may lack its GObject bindings.
+SYSTEM_PYTHON=/usr/bin/python
+NAUTILUS_PYTHON_LIBRARY=/usr/lib/nautilus/extensions-4/libnautilus-python.so
 LANGUAGE=${QUICKSHARE_LANGUAGE:-en}
 MINIMUM_BACKEND_VERSION=0.3.7
 backend_version_supported() {
@@ -145,10 +148,10 @@ preserve_language() {
   mv -f -- "$temporary" "$CONFIG_HOME/omarchy-quickshare/language"
 }
 check_nautilus() {
-  require_commands python nautilus
-  python -c 'import gi; gi.require_version("Nautilus", "4.1"); gi.require_version("Gtk", "4.0"); from gi.repository import Nautilus, Gtk' || fail \
+  require_commands "$SYSTEM_PYTHON" nautilus
+  "$SYSTEM_PYTHON" -c 'import gi; gi.require_version("Nautilus", "4.1"); gi.require_version("Gtk", "4.0"); from gi.repository import Nautilus, Gtk' || fail \
     'Install nautilus, nautilus-python, python-gobject and gtk4 first.' 'Instala primero nautilus, nautilus-python, python-gobject y gtk4.'
-  [[ -f /usr/lib/nautilus/extensions-4/libnautilus-python.so ]] || fail 'Install nautilus-python first.' 'Instala primero nautilus-python.'
+  [[ -f $NAUTILUS_PYTHON_LIBRARY ]] || fail 'Install nautilus-python first.' 'Instala primero nautilus-python.'
 }
 pause_service() {
   check_idle
