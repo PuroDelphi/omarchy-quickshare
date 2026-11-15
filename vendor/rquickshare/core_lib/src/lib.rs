@@ -18,6 +18,8 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 #[cfg(target_os = "linux")]
 mod bluetooth;
+#[cfg(target_os = "linux")]
+mod bluetooth_supervisor;
 pub mod channel;
 mod crypto;
 mod hdl;
@@ -82,8 +84,10 @@ pub struct RQS {
     qr_invitation: watch::Sender<Option<Arc<QrInvitation>>>,
     qr_matches: mpsc::Sender<QrPeer>,
     qr_receiver: Option<mpsc::Receiver<QrPeer>>,
+    /// The live Bluetooth backend, republished by `bluetooth_supervisor` when the
+    /// adapter comes back after a power-off, a BlueZ restart or a late start.
     #[cfg(target_os = "linux")]
-    bluetooth: Option<Arc<bluetooth::Bluetooth>>,
+    bluetooth: bluetooth_supervisor::Slot<bluetooth::Bluetooth>,
 }
 impl Default for RQS {
     fn default() -> Self {
@@ -133,7 +137,7 @@ impl RQS {
             qr_matches,
             qr_receiver: Some(qr_receiver),
             #[cfg(target_os = "linux")]
-            bluetooth: None,
+            bluetooth: Arc::new(watch::channel(None).0),
         }
     }
     pub fn set_network_consent(&self, allowed: bool) {
@@ -203,38 +207,49 @@ impl RQS {
         let (incoming_sender, incoming_receiver) = mpsc::channel(16);
         #[cfg(target_os = "linux")]
         if self.options.bluetooth {
-            match bluetooth::Bluetooth::new(
+            let first = bluetooth::Bluetooth::new(
                 endpoint,
                 name.clone(),
                 self.visibility_receiver.clone(),
                 self.message_sender.clone(),
             )
-            .await
-            {
-                Ok(bluetooth) => {
-                    let bluetooth = Arc::new(bluetooth);
-                    self.bluetooth = Some(bluetooth.clone());
-                    let child = token.clone();
-                    let events = self.message_sender.clone();
-                    tracker.spawn(async move {
-                        if let Err(error) = bluetooth.run(incoming_sender, child).await {
-                            Self::background_error(
-                                &events,
-                                format!("Bluetooth transport: {error:#}"),
-                            );
-                        }
-                    });
-                }
+            .await;
+            let start = match first {
+                Ok(bluetooth) => bluetooth_supervisor::Start::Running(bluetooth),
                 Err(error) => {
-                    Self::background_error(
-                        &self.message_sender,
-                        format!("Bluetooth initialization: {error:#}"),
-                    );
+                    let message = format!("Bluetooth initialization: {error:#}");
+                    Self::background_error(&self.message_sender, message.clone());
                     if !self.options.lan {
                         return Err(error);
                     }
+                    bluetooth_supervisor::Start::Failed(message)
                 }
-            }
+            };
+            // LAN does not depend on Bluetooth, but Bluetooth must come back by itself
+            // after the adapter is powered off, BlueZ restarts or the adapter was not
+            // ready at startup. The supervisor rebuilds it through `Bluetooth::new`.
+            let (make_name, make_visibility, make_events) = (
+                name.clone(),
+                self.visibility_receiver.clone(),
+                self.message_sender.clone(),
+            );
+            let (run_token, events) = (token.clone(), self.message_sender.clone());
+            tracker.spawn(bluetooth_supervisor::supervise(
+                self.bluetooth.clone(),
+                start,
+                move || {
+                    bluetooth::Bluetooth::new(
+                        endpoint,
+                        make_name.clone(),
+                        make_visibility.clone(),
+                        make_events.clone(),
+                    )
+                },
+                move |bluetooth| bluetooth.run(incoming_sender.clone(), run_token.clone()),
+                move |message| Self::background_error(&events, message),
+                bluetooth_supervisor::Pace::DEFAULT,
+                token.clone(),
+            ));
         }
         #[cfg(not(target_os = "linux"))]
         if self.options.bluetooth {
@@ -274,7 +289,7 @@ impl RQS {
             routes: self.routes.clone(),
             lan_upgrade_host,
             #[cfg(target_os = "linux")]
-            bluetooth: self.bluetooth.clone(),
+            bluetooth: self.bluetooth.subscribe(),
         };
         let child = token.clone();
         let events = self.message_sender.clone();
@@ -317,15 +332,15 @@ impl RQS {
             });
         }
         #[cfg(target_os = "linux")]
-        if let Some(bluetooth) = &self.bluetooth {
-            let bluetooth = bluetooth.clone();
-            let child = token.clone();
+        if self.options.bluetooth {
+            // Follows the published backend, so discovery restarts on a rebuilt instance.
             let events = self.message_sender.clone();
-            tracker.spawn(async move {
-                if let Err(error) = bluetooth.discover(proxy, child).await {
-                    Self::background_error(&events, format!("Bluetooth discovery: {error:#}"));
-                }
-            });
+            tracker.spawn(bluetooth_supervisor::follow(
+                self.bluetooth.subscribe(),
+                move |bluetooth, ctk| bluetooth.discover(proxy.clone(), ctk),
+                move |message| Self::background_error(&events, message),
+                token.clone(),
+            ));
         }
         let child = token.clone();
         let routes = self.routes.clone();
@@ -404,7 +419,7 @@ impl RQS {
         }
         #[cfg(target_os = "linux")]
         {
-            self.bluetooth = None;
+            self.bluetooth.send_replace(None);
         }
     }
     pub fn set_download_path(&self, path: Option<PathBuf>) {

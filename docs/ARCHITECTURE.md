@@ -99,6 +99,8 @@ Live LE connections hold the radio-coordination gate even when a peer skips read
 
 Hiding or cancelling a transfer is not disconnect confirmation. Incomplete or unreadable connection snapshots fail closed. Radio errors remain explicit; the service does not reset adapters, disconnect foreign clients or silently retry a transfer. Coordination checks prevent changes while a known LE bearer is live, but are not a guarantee against firmware faults or races with other Bluetooth clients.
 
+When BlueZ powers the adapter off, restarts, or the adapter disappears, the Bluetooth backend ends: `capabilities.bluetooth` becomes false and the cause is recorded. The engine rebuilds it through the ordinary startup path, including recovery of the adapter-settings journal, once BlueZ reports a usable adapter. The same applies when the adapter was not ready at service start. Rebuilds are bounded: delays back off from 2 to 10 seconds, an unchanged error is reported once, a new instance is not built while the previous one is still referenced (its journal lock and RFCOMM profile are single-owner), and supervision stops after five consecutive instances that each failed within 30 seconds, which leaves Bluetooth failed closed until the service restarts. The service never powers the adapter on, and LAN transport is unaffected throughout.
+
 Temporary hotspot changes require explicit consent before interrupting an existing Wi-Fi connection. Hosting/joining those routes uses NetworkManager-owned profiles and protocol-protected credentials; existing-LAN upgrades use only read-only interface inspection and owned sockets. No Wi-Fi Direct/P2P, WPA3, 6 GHz, Google account/contact identity or lossless resume is advertised.
 
 ## File publication and cancellation

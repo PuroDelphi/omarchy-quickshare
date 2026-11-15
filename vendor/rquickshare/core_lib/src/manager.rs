@@ -45,8 +45,10 @@ pub struct Manager {
     pub hotspot: bool,
     pub lan_upgrade_host: Option<LanUpgradeHost>,
     pub routes: Routes,
+    /// The currently published Bluetooth backend. It can be withdrawn and rebuilt
+    /// while the engine runs, so each use reads the current value.
     #[cfg(target_os = "linux")]
-    pub bluetooth: Option<Arc<crate::bluetooth::Bluetooth>>,
+    pub bluetooth: watch::Receiver<Option<Arc<crate::bluetooth::Bluetooth>>>,
 }
 impl Manager {
     pub async fn run(
@@ -285,12 +287,16 @@ impl Manager {
             for route in destinations.into_iter().flatten() {
                 if route.starts_with("bt:") {
                     #[cfg(target_os = "linux")]
-                    if let Some(bluetooth) = &self.bluetooth {
-                        match bluetooth.connect(&route).await {
-                            Ok(stream) => return Ok((stream, "bluetooth")),
-                            Err(e) => {
-                                error = e;
-                                continue;
+                    {
+                        // Clone out of the receiver: its guard must not live across `.await`.
+                        let current = self.bluetooth.borrow().clone();
+                        if let Some(bluetooth) = current {
+                            match bluetooth.connect(&route).await {
+                                Ok(stream) => return Ok((stream, "bluetooth")),
+                                Err(e) => {
+                                    error = e;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -484,7 +490,7 @@ mod tests {
                 lan_upgrade_host: Some(host),
                 routes: Arc::new(RwLock::new(HashMap::new())),
                 #[cfg(target_os = "linux")]
-                bluetooth: None,
+                bluetooth: watch::channel(None).1,
             },
             receive,
         )
@@ -607,7 +613,7 @@ mod tests {
             lan_upgrade_host: None,
             routes: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(target_os = "linux")]
-            bluetooth: None,
+            bluetooth: watch::channel(None).1,
         };
         let (outgoing, sends) = mpsc::channel(1);
         let (_incoming, incoming) = mpsc::channel(1);
@@ -683,7 +689,7 @@ mod tests {
                 lan_upgrade_host: None,
                 routes,
                 #[cfg(target_os = "linux")]
-                bluetooth: None,
+                bluetooth: watch::channel(None).1,
             };
             let original = prefer.then_some(original); // closed selected route in fallback case
             let stop = CancellationToken::new();
